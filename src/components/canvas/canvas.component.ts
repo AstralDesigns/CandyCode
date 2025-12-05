@@ -7,11 +7,19 @@ import { MarkdownPipe } from '../../pipes/markdown.pipe';
 import { FileSystemItem } from '../../models/file-system-item.model';
 import { MediaGalleryComponent } from '../media-gallery/media-gallery.component';
 import { MediaLightboxComponent } from '../media-lightbox/media-lightbox.component';
+import { MonacoEditorComponent } from '../monaco-editor/monaco-editor.component';
 
 @Component({
   selector: 'app-canvas',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownPipe, MediaGalleryComponent, MediaLightboxComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    MarkdownPipe,
+    MediaGalleryComponent,
+    MediaLightboxComponent,
+    MonacoEditorComponent,
+  ],
   templateUrl: './canvas.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

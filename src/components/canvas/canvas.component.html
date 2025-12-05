@@ -52,12 +52,11 @@
     @if (activePane(); as pane) {
       @switch (pane.type) {
         @case ('code') {
-          <textarea
-            class="w-full h-full p-4 bg-transparent font-mono text-sm text-slate-200 resize-none focus:outline-none"
-            [ngModel]="pane.content"
-            (ngModelChange)="onContentChange($event)"
-            spellcheck="false"
-          ></textarea>
+          <app-monaco-editor 
+            [content]="pane.content" 
+            [language]="pane.language!"
+            (contentChange)="onContentChange($event)">
+          </app-monaco-editor>
         }
         @case ('markdown') {
           <textarea

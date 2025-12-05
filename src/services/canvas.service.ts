@@ -1,4 +1,4 @@
-import { Injectable, signal, computed, inject } from '@angular/core';
+import { Injectable, signal, computed, inject, effect } from '@angular/core';
 import { FilePane } from '../models/file-pane.model';
 import { FileSystemService } from './file-system.service';
 
@@ -6,6 +6,7 @@ import { FileSystemService } from './file-system.service';
   providedIn: 'root',
 })
 export class CanvasService {
+  private readonly WORKSPACE_STATE_KEY = 'agentic-studio-workspace-v1';
   private fileSystemService = inject(FileSystemService);
   panes = signal<FilePane[]>([]);
   activePaneId = signal<string | null>(null);
@@ -21,6 +22,50 @@ export class CanvasService {
   hasOpenPanes = computed(() => this.panes().length > 0);
 
   constructor() {
+    this.loadState();
+    
+    // Auto-save workspace state whenever it changes
+    effect(() => {
+      const panes = this.panes();
+      const activePaneId = this.activePaneId();
+      if (panes.length > 0) {
+        const state = {
+          panes,
+          activePaneId,
+        };
+        try {
+          localStorage.setItem(this.WORKSPACE_STATE_KEY, JSON.stringify(state));
+        } catch (e) {
+          console.error('Failed to save workspace state:', e);
+        }
+      } else {
+        // Clear storage if there are no panes left
+        localStorage.removeItem(this.WORKSPACE_STATE_KEY);
+      }
+    });
+  }
+
+  private loadState(): void {
+    try {
+      const savedState = localStorage.getItem(this.WORKSPACE_STATE_KEY);
+      if (savedState) {
+        const state = JSON.parse(savedState);
+        if (state.panes && state.activePaneId) {
+          this.panes.set(state.panes);
+          this.activePaneId.set(state.activePaneId);
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load workspace state:', e);
+      localStorage.removeItem(this.WORKSPACE_STATE_KEY);
+    }
+    
+    // If no saved state, open the welcome message
+    this.openWelcomePane();
+  }
+
+  private openWelcomePane(): void {
     this.openFile({
       id: 'welcome',
       name: 'Welcome.md',

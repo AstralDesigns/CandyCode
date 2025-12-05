@@ -8,7 +8,9 @@ import {
   OnDestroy,
   AfterViewInit,
   ChangeDetectionStrategy,
+  inject,
 } from '@angular/core';
+import { MonacoLoaderService } from '../../services/monaco-loader.service';
 
 declare const monaco: any;
 
@@ -28,6 +30,7 @@ export class MonacoEditorComponent implements AfterViewInit, OnDestroy {
 
   private editor: any;
   private isUpdatingFromInput = false;
+  private monacoLoaderService = inject(MonacoLoaderService);
 
   constructor() {
     // Effect to handle external content changes (e.g., from state restoration)
@@ -47,15 +50,9 @@ export class MonacoEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit(): void {
-    if ((window as any).monaco) {
+    this.monacoLoaderService.ensureMonacoIsLoaded().then(() => {
       this.initMonaco();
-    } else {
-      // Monaco is loaded via a script tag, so we need to wait for it.
-      (window as any).require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' }});
-      (window as any).require(['vs/editor/editor.main'], () => {
-        this.initMonaco();
-      });
-    }
+    });
   }
 
   initMonaco(): void {

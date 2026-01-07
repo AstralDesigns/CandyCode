@@ -1,0 +1,137 @@
+"use strict";
+/**
+ * Tool definitions for Gemini function calling
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TOOL_DEFINITIONS = void 0;
+exports.TOOL_DEFINITIONS = [
+    {
+        functionDeclarations: [
+            {
+                name: "read_file",
+                description: "Read FULL file content. Use this when you need to EDIT a file. Always returns complete content - no truncation. For browsing/context without editing, use peek_file instead.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        path: { type: "string", description: "File path to read" },
+                        start_line: { type: "integer", description: "Optional: Start line number (1-based). Use with end_line to read a specific range of a very large file." },
+                        end_line: { type: "integer", description: "Optional: End line number (1-based). Use with start_line to read a specific range." }
+                    },
+                    required: ["path"]
+                }
+            },
+            {
+                name: "peek_file",
+                description: "Quick peek at file - returns summary with first/last lines. Use this for browsing/exploring files to understand structure. When you need to edit a file, use read_file to get full content.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        path: { type: "string", description: "File path to peek at" },
+                        preview_lines: { type: "integer", description: "Optional: Number of lines to show from start/end (default: 50)" }
+                    },
+                    required: ["path"]
+                }
+            },
+            {
+                name: "write_file",
+                description: "Write content to a file. For small files, write complete content in one call. For large files (>10K chars), use chunked writes: call multiple times with finalize=false, then once with finalize=true for the last chunk.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        path: { type: "string", description: "File path to write" },
+                        content: { type: "string", description: "File content (or chunk for large files)" },
+                        mode: { type: "string", description: "Write mode: 'overwrite' (default) or 'append' to append to existing file" },
+                        finalize: { type: "boolean", description: "If false, accumulate chunks. Set true on last chunk to write file. Default: true" }
+                    },
+                    required: ["path", "content"]
+                }
+            },
+            {
+                name: "list_files",
+                description: "List files and directories in a path",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        directory_path: { type: "string", description: "Directory to list" }
+                    },
+                    required: ["directory_path"]
+                }
+            },
+            {
+                name: "search_code",
+                description: "Search for a pattern in the codebase",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        pattern: { type: "string", description: "Search pattern" }
+                    },
+                    required: ["pattern"]
+                }
+            },
+            {
+                name: "execute_command",
+                description: "Execute a shell command. Safe commands run automatically. Elevated commands need approval. Package installs run interactively for password entry.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        command: { type: "string", description: "Shell command to execute" },
+                        needs_elevation: { type: "boolean", description: "Whether the command requires elevated privileges (sudo, etc.)" }
+                    },
+                    required: ["command"]
+                }
+            },
+            {
+                name: "create_plan",
+                description: "Create or update a task plan/to-do list. Use at start of complex tasks AND mid-task when you discover additional work needed. Supports dynamic task management with add/update/skip capabilities.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        title: { type: "string", description: "Title of the plan" },
+                        steps: {
+                            type: "array",
+                            description: "Array of task steps. Each step should have description, status, and order. You can add new steps mid-workflow by calling create_plan again with additional steps.",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    id: { type: "string", description: "Unique step ID (e.g., '1', '2', 'step_1')" },
+                                    description: { type: "string", description: "Description of the task step" },
+                                    status: { type: "string", enum: ["pending", "in-progress", "completed", "skipped"], description: "Current status of the step" },
+                                    order: { type: "number", description: "Order/sequence number (1, 2, 3, etc.)" }
+                                },
+                                required: ["id", "description", "status", "order"]
+                            }
+                        },
+                        after_id: {
+                            type: "string",
+                            description: "Optional: Insert new steps after this step ID (for mid-workflow additions)"
+                        }
+                    },
+                    required: ["title", "steps"]
+                }
+            },
+            {
+                name: "task_complete",
+                description: "Call this when you have finished ALL requested tasks. This signals completion.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        summary: { type: "string", description: "Brief summary of what was accomplished" }
+                    },
+                    required: ["summary"]
+                }
+            },
+            {
+                name: "web_search",
+                description: "Search the web for information, documentation, or solutions.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        query: { type: "string", description: "Search query" }
+                    },
+                    required: ["query"]
+                }
+            }
+        ]
+    }
+];
+//# sourceMappingURL=tool-definitions.js.map

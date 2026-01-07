@@ -1,35 +1,90 @@
 {
-  "name": "agentic-studio",
+  "name": "alphastudio",
+  "productName": "AlphaStudio",
   "version": "1.0.0",
-  "description": "An agent-centric AI chat interface for managing projects.",
-  "main": "main.js",
-  "scripts": {
-    "ng": "ng",
-    "start": "concurrently -k \"npm:build-watch\" \"npm:electron-dev\"",
-    "build": "ng build",
-    "build-watch": "ng build --watch",
-    "electron-dev": "electron .",
-    "package": "ng build && electron-builder"
-  },
+  "description": "A futuristic AI-powered code editor and workspace with Gemini integration",
+  "main": "dist-electron/main.js",
+  "author": "AlphaStudio",
+  "license": "MIT",
   "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:hardware": "ALPHASTUDIO_HARDWARE_ACCEL=1 concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "tsc -p electron/tsconfig.json && npx wait-on http://localhost:5173 && electron .",
+    "build": "npm run build:vite && npm run build:electron",
+    "build:vite": "vite build",
+    "build:electron": "tsc -p electron",
+    "package": "npm run build && electron-builder",
+    "package:linux": "npm run build && electron-builder --linux",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:win": "npm run build && electron-builder --win"
+  },
   "dependencies": {
-    "@angular/common": "^18.1.0",
-    "@angular/compiler": "^18.1.0",
-    "@angular/core": "^18.1.0",
-    "@angular/forms": "^18.1.0",
-    "@angular/platform-browser": "^18.1.0",
-    "@google/genai": "^1.3.0",
-    "rxjs": "~7.8.0",
-    "tslib": "^2.3.0"
+    "@monaco-editor/loader": "^1.7.0",
+    "@monaco-editor/react": "^4.7.0",
+    "clsx": "^2.1.1",
+    "electron-fetch": "^1.9.1",
+    "framer-motion": "^11.5.4",
+    "glob": "^11.1.0",
+    "lucide-react": "^0.447.0",
+    "monaco-editor": "^0.55.1",
+    "node-fetch": "^2.7.0",
+    "ollama": "^0.5.11",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "react-router-dom": "^6.26.0",
+    "zustand": "^4.5.5"
   },
   "devDependencies": {
-    "@angular-devkit/build-angular": "^18.1.0",
-    "@angular/cli": "^18.1.0",
-    "@angular/compiler-cli": "^18.1.0",
+    "@types/node": "^22.5.5",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
     "concurrently": "^8.2.2",
     "electron": "^31.2.1",
     "electron-builder": "^24.13.3",
-    "electron-reloader": "^1.2.3",
-    "typescript": "~5.5.2"
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.11",
+    "typescript": "^5.6.2",
+    "vite": "^7.3.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.alphastudio.app",
+    "productName": "AlphaStudio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Development",
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icon.ico"
+    }
   }
 }

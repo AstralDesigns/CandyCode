@@ -1,106 +1,48 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>Agentic Studio</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" type="image/x-icon" href="favicon.ico" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
-  <style>
-    /* Custom scrollbar for webkit browsers */
-    ::-webkit-scrollbar {
-      width: 8px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #1e293b; /* slate-800 */
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #475569; /* slate-600 */
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #64748b; /* slate-500 */
-    }
-
-    /* New styles for floating panels and layout */
-    .app-main {
-      transition: padding-left 300ms ease-in-out, padding-right 300ms ease-in-out;
-    }
-    .sidebar-panel, .chat-panel {
-      position: fixed;
-      top: 0;
-      bottom: 0;
-      transition: transform 300ms ease-in-out;
-      z-index: 40;
-    }
-    .sidebar-panel {
-      left: 0;
-      transform: translateX(-100%);
-    }
-    .chat-panel {
-      right: 0;
-      transform: translateX(100%);
-    }
-    .sidebar-visible .sidebar-panel {
-      transform: translateX(0);
-    }
-    .chat-visible .chat-panel {
-      transform: translateX(0);
-    }
-    .backdrop {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background-color: rgba(0, 0, 0, 0.5);
-      z-index: 30;
-      opacity: 0;
-      transition: opacity 300ms ease-in-out;
-      pointer-events: none;
-    }
-    .chat-visible .backdrop, .sidebar-visible .backdrop {
-        opacity: 1;
-        pointer-events: auto;
-    }
-    
-    @media (min-width: 1024px) {
-      .sidebar-visible .app-main {
-        padding-left: 16rem; /* w-64 */
-      }
-      .chat-visible .app-main {
-        padding-right: 24rem; /* w-96 */
-      }
-      .sidebar-panel, .chat-panel {
-        transform: translateX(0) !important;
-        position: absolute;
-      }
-      .chat-visible .backdrop, .sidebar-visible .backdrop {
-          display: none;
-      }
-    }
-  </style>
-<script type="importmap">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AetherCode</title>
+  <script type="importmap">
 {
   "imports": {
-    "rxjs": "https://aistudiocdn.com/rxjs@^7.8.2?conditions=es2015",
-    "rxjs/operators": "https://aistudiocdn.com/rxjs@^7.8.2/operators?conditions=es2015",
-    "rxjs/ajax": "https://aistudiocdn.com/rxjs@^7.8.2/ajax?conditions=es2015",
-    "rxjs/webSocket": "https://aistudiocdn.com/rxjs@^7.8.2/webSocket?conditions=es2015",
-    "rxjs/testing": "https://aistudiocdn.com/rxjs@^7.8.2/testing?conditions=es2015",
-    "rxjs/fetch": "https://aistudiocdn.com/rxjs@^7.8.2/fetch?conditions=es2015",
-    "@angular/core": "https://next.esm.sh/@angular/core@^21.0.3?external=rxjs",
-    "@angular/common": "https://next.esm.sh/@angular/common@^21.0.3?external=rxjs",
-    "@google/genai": "https://next.esm.sh/@google/genai@^1.31.0?external=rxjs",
-    "@angular/forms": "https://next.esm.sh/@angular/forms@^21.0.3?external=rxjs",
-    "@angular/platform-browser": "https://next.esm.sh/@angular/platform-browser@^21.0.3?external=rxjs",
-    "@angular/common/http": "https://next.esm.sh/@angular/common@^21.0.3/http?external=rxjs"
+    "rxjs": "https://esm.sh/rxjs@^7.8.2?conditions=es2015",
+    "rxjs/operators": "https://esm.sh/rxjs@^7.8.2/operators?conditions=es2015",
+    "rxjs/ajax": "https://esm.sh/rxjs@^7.8.2/ajax?conditions=es2015",
+    "rxjs/webSocket": "https://esm.sh/rxjs@^7.8.2/webSocket?conditions=es2015",
+    "rxjs/testing": "https://esm.sh/rxjs@^7.8.2/testing?conditions=es2015",
+    "rxjs/fetch": "https://esm.sh/rxjs@^7.8.2/fetch?conditions=es2015",
+    "react": "https://esm.sh/react@^19.2.3?external=rxjs",
+    "react/jsx-runtime": "https://esm.sh/react@^19.2.3/jsx-runtime?external=rxjs",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client?external=rxjs",
+    "react-dom": "https://esm.sh/react-dom@^19.2.3?external=rxjs",
+    "react-markdown": "https://esm.sh/react-markdown@^10.1.0?external=rxjs",
+    "vite": "https://esm.sh/vite@^7.3.1?external=rxjs",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0?external=rxjs",
+    "node-fetch": "https://esm.sh/node-fetch@^3.3.2?external=rxjs",
+    "child_process": "https://esm.sh/child_process@^1.0.2?external=rxjs",
+    "electron": "https://esm.sh/electron@^39.2.7?external=rxjs",
+    "fs/promises": "https://esm.sh/fs@^0.0.1-security/promises?external=rxjs",
+    "fs": "https://esm.sh/fs@^0.0.1-security?external=rxjs",
+    "path": "https://esm.sh/path@^0.12.7?external=rxjs",
+    "@monaco-editor/react": "https://esm.sh/@monaco-editor/react@^4.7.0?external=rxjs",
+    "url": "https://esm.sh/url@^0.11.4?external=rxjs",
+    "os": "https://esm.sh/os@^0.1.2?external=rxjs",
+    "http": "https://esm.sh/http@^0.0.1-security?external=rxjs",
+    "zustand": "https://esm.sh/zustand@^5.0.9?external=rxjs",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2?external=rxjs",
+    "util": "https://esm.sh/util@^0.12.5?external=rxjs",
+    "@monaco-editor/loader": "https://esm.sh/@monaco-editor/loader@^1.7.0?external=rxjs",
+    "ollama": "https://esm.sh/ollama@^0.6.3?external=rxjs",
+    "glob": "https://esm.sh/glob@^13.0.0?external=rxjs"
   }
 }
 </script>
 </head>
-<body class="bg-slate-900 text-slate-200 antialiased">
-  <app-root></app-root>
-</body>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

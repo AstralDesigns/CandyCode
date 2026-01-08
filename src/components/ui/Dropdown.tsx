@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Check } from 'lucide-react';
@@ -77,7 +78,8 @@ export default function Dropdown({ value, onChange, options, placeholder, classN
         ref={triggerRef}
         onClick={() => setIsOpen(!isOpen)}
         className={`flex items-center justify-between px-3 py-1.5 bg-white/5 border border-border rounded text-xs text-foreground hover:bg-white/10 transition-colors focus:outline-none focus:ring-1 focus:ring-accent ${className}`}
-        title={title}
+        data-tooltip={title}
+        data-tooltip-position="bottom"
       >
         <span className="truncate mr-2">{selectedLabel}</span>
         <ChevronDown className={`w-3 h-3 text-muted transition-transform ${isOpen ? 'rotate-180' : ''}`} />

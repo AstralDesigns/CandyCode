@@ -98,6 +98,8 @@ interface Store {
   // Settings
   showSettings: boolean;
   setShowSettings: (show: boolean) => void;
+  activeSettingsTab: string;
+  setActiveSettingsTab: (tab: string) => void;
   
   // Terminal Settings
   terminalSettings: TerminalSettings;
@@ -258,6 +260,8 @@ export const useStore = create<Store>()((set) => ({
   // Settings
   showSettings: false,
   setShowSettings: (show) => set({ showSettings: show }),
+  activeSettingsTab: 'themes',
+  setActiveSettingsTab: (tab) => set({ activeSettingsTab: tab }),
 
   // Terminal Settings
   terminalSettings: {
@@ -929,6 +933,7 @@ if (typeof window !== 'undefined') {
         messages: parsed.messages || [],
         sidebarWidth: parsed.sidebarWidth || 256,
         chatWidth: parsed.chatWidth || 384,
+        activeSettingsTab: parsed.activeSettingsTab || 'themes',
       });
     } catch (e) {
       console.error('Failed to parse stored state:', e);
@@ -973,6 +978,7 @@ if (typeof window !== 'undefined') {
         })),
         sidebarWidth: state.sidebarWidth,
         chatWidth: state.chatWidth,
+        activeSettingsTab: state.activeSettingsTab,
       };
       localStorage.setItem('alphastudio-storage', JSON.stringify(serializableState));
     } catch (e) {

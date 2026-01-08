@@ -34,8 +34,6 @@ export interface TerminalSettings {
   fontSize: number;
   cursorStyle: 'block' | 'underline' | 'bar';
   cursorBlink: boolean;
-  showAscii: boolean;
-  customAscii: string;
   fontFamily: string;
   shell: string;
 }
@@ -266,13 +264,6 @@ export const useStore = create<Store>()((set) => ({
     fontSize: 13,
     cursorStyle: 'block',
     cursorBlink: true,
-    showAscii: true,
-    customAscii: `    ___    __      __            _____ __            ___      
-   /   |  / /___  / /_  ____ _  / ___// /___  ______/ (_)___ 
-  / /| | / / __ \\/ __ \\/ __ \`/  \\__ \\/ __/ / / / __  / / __ \\
- / ___ |/ / /_/ / / / / /_/ /  ___/ / /_/ /_/ / /_/ / / /_/ /
-/_/  |_/_/ .___/_/ /_/\\__,_/  /____/\\__/\\__,_/\\__,_/_/\\____/ 
-        /_/                                                  `,
     fontFamily: '"JetBrainsMono Nerd Font", "FiraCode Nerd Font", "MesloLGS NF", "Cascadia Code", Consolas, monospace',
     shell: ''
   },
@@ -931,13 +922,6 @@ if (typeof window !== 'undefined') {
           fontSize: 13,
           cursorStyle: 'block',
           cursorBlink: true,
-          showAscii: true,
-          customAscii: `    ___    __      __            _____ __            ___      
-   /   |  / /___  / /_  ____ _  / ___// /___  ______/ (_)___ 
-  / /| | / / __ \\/ __ \\/ __ \`/  \\__ \\/ __/ / / / __  / / __ \\
- / ___ |/ / /_/ / / / / /_/ /  ___/ / /_/ /_/ / /_/ / / /_/ /
-/_/  |_/_/ .___/_/ /_/\\__,_/  /____/\\__/\\__,_/\\__,_/_/\\____/ 
-        /_/                                                  `,
           fontFamily: '"JetBrainsMono Nerd Font", "FiraCode Nerd Font", "MesloLGS NF", "Cascadia Code", Consolas, monospace',
           shell: ''
         },

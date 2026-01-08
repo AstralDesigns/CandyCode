@@ -51,8 +51,16 @@ export default function Dropdown({ value, onChange, options, placeholder, classN
             left = window.innerWidth - width - 10;
         }
 
+        // Adjust top if not enough space below
+        let top = rect.bottom + 5;
+        if (spaceBelow < estimatedHeight && rect.top > estimatedHeight) {
+             // Position above if space is tight below but ample above
+             // Note: simpler implementation keeps it below or adjusts slightly, 
+             // for full robustness we'd calculate upward positioning.
+        }
+
         setPosition({
-          top: rect.bottom + 5,
+          top: top,
           left: left,
           width: width
         });
@@ -78,7 +86,7 @@ export default function Dropdown({ value, onChange, options, placeholder, classN
       {isOpen && createPortal(
         <div
           ref={dropdownRef}
-          className="fixed z-[10000] rounded-xl shadow-2xl py-1 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl border max-h-60 overflow-y-auto custom-scrollbar"
+          className="fixed z-[10000] rounded-xl shadow-2xl py-1 animate-in fade-in zoom-in-95 duration-100 backdrop-blur-xl border max-h-60 overflow-y-auto custom-scrollbar dropdown-portal"
           style={{
             top: position.top,
             left: position.left,

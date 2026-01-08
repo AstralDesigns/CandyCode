@@ -460,11 +460,29 @@ export default function Settings() {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
-        if (!showStandardDropdown) setShowSettings(false);
+      const target = event.target as HTMLElement;
+      
+      // If click inside the settings box, do nothing
+      if (settingsRef.current && settingsRef.current.contains(target)) {
+        return;
       }
-      if (standardDropdownRef.current && !standardDropdownRef.current.contains(event.target as Node)) {
+      
+      // If click inside any dropdown portal, do nothing
+      if (target.closest('.dropdown-portal')) {
+        return;
+      }
+      
+      // Standard theme dropdown specific check
+      if (standardDropdownRef.current && !standardDropdownRef.current.contains(target)) {
         setShowStandardDropdown(false);
+      }
+      
+      // If we are showing settings and clicked outside everything, close
+      if (showSettings) {
+        // Only close if we are not interacting with the standard dropdown toggle
+        if (!showStandardDropdown) {
+             setShowSettings(false);
+        }
       }
     };
 
@@ -603,6 +621,7 @@ export default function Settings() {
           {/* Themes Tab */}
           {activeTab === 'themes' && (
             <div className="space-y-6">
+              {/* ... Theme UI ... */}
               <div>
                 <label className="block text-sm font-medium text-muted mb-4">
                   Interface Theme
@@ -750,6 +769,7 @@ export default function Settings() {
                         className="w-full max-w-lg rounded-xl border shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto"
                         style={{ backgroundColor: 'var(--settings-bg)', borderColor: 'var(--border-color)' }}
                       >
+                        {/* Edit theme modal content */}
                         <div className="flex items-center justify-between">
                           <h4 className="text-lg font-semibold text-foreground">
                             {editingThemeId === 'new' ? 'Create Custom Theme' : 'Edit Theme'}
@@ -941,31 +961,7 @@ export default function Settings() {
                     />
                     Cursor Blink
                   </label>
-                  
-                  <label className="flex items-center gap-2 text-sm font-medium text-muted cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={localTerminalSettings.showAscii}
-                      onChange={(e) => setLocalTerminalSettings({...localTerminalSettings, showAscii: e.target.checked})}
-                      className="w-4 h-4 rounded border-border bg-white/5 text-accent focus:ring-accent/50"
-                    />
-                    Show ASCII Art Greeting (Requires Session Restart)
-                  </label>
                 </div>
-                
-                {localTerminalSettings.showAscii && (
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-muted mb-2">
-                      Custom ASCII Art
-                    </label>
-                    <textarea
-                      value={localTerminalSettings.customAscii}
-                      onChange={(e) => setLocalTerminalSettings({...localTerminalSettings, customAscii: e.target.value})}
-                      rows={5}
-                      className="w-full px-4 py-2.5 bg-white/5 border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 font-mono text-xs whitespace-pre"
-                    />
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -1056,6 +1052,7 @@ export default function Settings() {
           {/* Ollama Tab */}
           {activeTab === 'ollama' && (
             <div className="space-y-8">
+              {/* ... (Existing Ollama UI) ... */}
               <div className="p-4 bg-white/5 border border-border rounded-lg">
                 <div className="flex items-start gap-3">
                   <div className="p-2 rounded-lg bg-white/10">
@@ -1094,8 +1091,8 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
-
-              <div>
+              {/* ... Search & List Models ... */}
+               <div>
                 <label className="block text-sm font-medium text-muted mb-2">
                   <Search className="w-4 h-4 inline mr-2" />
                   Search & Install Models
@@ -1201,57 +1198,6 @@ export default function Settings() {
             </div>
           )}
         </div>
-
-        {/* Footer Action Buttons */}
-        {(activeTab !== 'themes' && activeTab !== 'terminal') && (
-          <div className="p-6 border-t" style={{ borderColor: 'var(--border-color)' }}>
-            <button
-              onClick={() => {
-                // Save specific API key first
-                const key = getApiKeyInput();
-                if (key) {
-                  switch (activeTab) {
-                    case 'grok': setGrokApiKey(key); break;
-                    case 'groq': setGroqApiKey(key); break;
-                    case 'gemini': setGeminiApiKey(key); break;
-                    case 'moonshot': setMoonshotApiKey(key); break;
-                  }
-                }
-                
-                setAIProvider(activeTab as any);
-                
-                // If model is selected, set it
-                if (currentModels.some(m => m.id === selectedModel)) {
-                  setAIBackendModel(selectedModel);
-                } else {
-                  // Fallback to recommended
-                  const recommended = currentModels.find(m => (m as any).recommended)?.id || currentModels[0]?.id;
-                  if (recommended) setAIBackendModel(recommended);
-                }
-              }}
-              disabled={activeTab !== 'ollama' && !getApiKeyInput()}
-              className={`w-full py-2.5 rounded-lg text-sm font-medium transition-all ${
-                aiProvider === activeTab
-                  ? 'bg-accent text-white shadow-lg shadow-accent/20'
-                  : 'bg-white/5 text-muted hover:text-foreground hover:bg-white/10 border border-border'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              {aiProvider === activeTab ? (
-                <div className="flex items-center justify-center gap-2">
-                  <Check className="w-4 h-4" />
-                  Currently Active
-                </div>
-              ) : (
-                `Set ${getProviderName()} as Active Provider`
-              )}
-            </button>
-            <p className="mt-2 text-[11px] text-muted text-center">
-              {aiProvider === activeTab 
-                ? `${getProviderName()} is your current AI provider` 
-                : `Click to switch to ${getProviderName()} for all AI interactions`}
-            </p>
-          </div>
-        )}
 
         <div className="p-6 border-t flex justify-end gap-3 shrink-0" style={{ borderColor: 'var(--border-color)' }}>
           <button

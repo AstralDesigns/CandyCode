@@ -732,7 +732,11 @@ export default function Sidebar() {
         <div className="px-2 py-1.5 border-b border-white/5 flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
             <FolderOpen className="w-3.5 h-3.5 mr-1.5 text-accent shrink-0" />
-            <span className="text-xs font-medium text-foreground truncate" title={projectRoot}>
+            <span 
+              className="text-xs font-medium text-foreground truncate" 
+              data-tooltip={projectRoot}
+              data-tooltip-position="bottom"
+            >
               {projectRoot.split('/').pop() || projectRoot}
             </span>
           </div>

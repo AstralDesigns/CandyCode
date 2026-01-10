@@ -63,37 +63,6 @@ A futuristic AI-powered code editor and workspace with native local and non-loca
 <img width="1366" height="768" alt="screenshot_10012026_230016" src="https://github.com/user-attachments/assets/4a6a1439-d9fa-4284-a67c-8c21531c9b41" />
 <img width="1366" height="768" alt="screenshot_10012026_230016" src="https://github.com/user-attachments/assets/2f2a5862-972c-4bc7-a108-8654540740c7" />
 
-## Setup
-
-### Prerequisites
-
-- Node.js 20+ and npm
-- An API key from one of the supported providers (Gemini, Grok, Groq, Moonshot) OR a local Ollama installation.
-
-### Installation
-
-1. Clone or navigate to the project:
-```bash
-cd ~/alpha-studio
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Configure API keys:
-   - Open the app and go to Settings (gear icon)
-   - Select your preferred AI provider
-   - Enter your API key (or configure Ollama for local models)
-
-### Building
-
-Build for production:
-```bash
-npm run build
-```
-
 ## Usage
 
 1. **Configure AI**: Open Settings to set up your preferred AI model and provider.
@@ -102,22 +71,6 @@ npm run build
 4. **Manage Tasks**: Add tasks in the task panel - the AI can create plans and track progress.
 5. **Review Changes**: When AI suggests changes (using `write_file`), review them in the diff widget before applying.
 6. **Execute Commands**: Use the terminal panel to run commands safely.
-
-## Project Structure
-
-```
-alpha-studio/
-├── electron/              # Electron main process
-│   ├── services/          # AI providers, file operations, agentic loop
-│   ├── main.ts            # Main process with IPC handlers
-│   └── preload.ts         # Preload script for secure IPC
-├── src/                   # React frontend
-│   ├── components/        # React components (Chat, Editor, Sidebar, etc.)
-│   ├── services/          # Frontend services
-│   ├── store.ts           # Zustand state management
-│   └── types/             # TypeScript types
-└── public/                # Static assets
-```
 
 ## Technologies
 

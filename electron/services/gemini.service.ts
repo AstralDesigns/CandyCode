@@ -84,6 +84,8 @@ export interface GeminiChatOptions {
     contextMode?: 'full' | 'smart' | 'minimal';
   };
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  isPro?: boolean; // Deprecated
+  licenseTier?: 'free' | 'standard' | 'pro';
 }
 
 export interface GeminiChunkData {
@@ -282,6 +284,19 @@ export class GeminiService {
   ): Promise<void> {
     this.onChunkCallback = onChunk;
     
+    // LICENSE CHECK: Set limits based on License Tier
+    const tier = options.licenseTier || (options.isPro ? 'pro' : 'free');
+    
+    // Define limits
+    const limits = {
+        free: { maxLoops: 3, allowSmartContext: false, allowFullContext: false },
+        standard: { maxLoops: 15, allowSmartContext: true, allowFullContext: false },
+        pro: { maxLoops: 50, allowSmartContext: true, allowFullContext: true }
+    }[tier] || { maxLoops: 3, allowSmartContext: false, allowFullContext: false };
+    
+    // Update loop manager with the new limit
+    this.loopManager = new AgenticLoopManager(limits.maxLoops);
+    
     if (continuationState) {
       this.originalUserInput = continuationState.userInput;
       this.filesCreated = new Set(continuationState.filesCreated);
@@ -338,7 +353,24 @@ export class GeminiService {
       // BUILD SMART CONTEXT IF PROJECT IS ACTIVE
       if (options.context?.project) {
         const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
-        const selectedContextMode = options.context.contextMode || 'smart';
+        
+        // LICENSE CHECK: Downgrade context mode if not allowed
+        let selectedContextMode = options.context.contextMode || 'smart';
+        
+        // Downgrade logic based on tier capabilities
+        if (!limits.allowFullContext && selectedContextMode === 'full') {
+            selectedContextMode = limits.allowSmartContext ? 'smart' : 'minimal';
+        } else if (!limits.allowSmartContext && selectedContextMode === 'smart') {
+            selectedContextMode = 'minimal';
+        }
+        
+        // Notify user if downgraded (only if it differs from what was requested)
+        if (selectedContextMode !== options.context.contextMode) {
+             this.sendChunk({ 
+               type: 'text', 
+               data: `> **License Limit:** Context downgraded to "${selectedContextMode}". Upgrade your license for better context awareness.\n\n` 
+             });
+        }
 
         if (isStartOfSession || selectedContextMode === 'full') {
           console.log(`[GeminiService] Building project context with mode: ${selectedContextMode}`);
@@ -524,6 +556,15 @@ export class GeminiService {
           return;
         }
       }
+      
+      // If we exit the loop without completion, notify the user about the limit
+      if (!this.loopManager.getTaskCompleted() && tier !== 'pro' && this.loopManager.getCurrentIteration() >= limits.maxLoops) {
+          this.sendChunk({ 
+              type: 'text', 
+              data: `\n\n**License Limit Reached:** The autonomous agent has stopped after ${limits.maxLoops} iterations. Upgrade to a higher tier for extended autonomous coding.` 
+          });
+      }
+      
       this.sendChunk({ type: 'done' });
     } catch (error: any) {
       console.error('[GeminiService] Error in chatStream:', error);

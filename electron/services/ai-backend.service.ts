@@ -6,6 +6,8 @@
  * - Grok: OpenAI-compatible (grok.service.ts)
  * - Moonshot: OpenAI-compatible (moonshot.service.ts)
  * - Ollama: Local LLM (ollama.service.ts)
+ * - OpenAI: Native API (openai.service.ts)
+ * - Anthropic: Native API (anthropic.service.ts)
  */
 import { BrowserWindow } from 'electron';
 import { GeminiService, GeminiChatOptions, GeminiChunkData, ContinuationState } from './gemini.service';
@@ -13,10 +15,12 @@ import { GroqService, GroqChatOptions, GroqChunkData } from './groq.service';
 import { GrokService, GrokChatOptions, GrokChunkData } from './grok.service';
 import { MoonshotService, MoonshotChatOptions, MoonshotChunkData } from './moonshot.service';
 import { OllamaService, OllamaChatOptions, OllamaChunkData } from './ollama.service';
+import { OpenAIService, OpenAIChatOptions, OpenAIChunkData } from './openai.service';
+import { AnthropicService, AnthropicChatOptions, AnthropicChunkData } from './anthropic.service';
 
 // Unified chat options that works across all providers
 export interface ChatOptions {
-  provider?: 'gemini' | 'groq' | 'grok' | 'moonshot' | 'ollama';
+  provider?: 'gemini' | 'groq' | 'grok' | 'moonshot' | 'ollama' | 'openai' | 'anthropic';
   apiKey?: string;
   model?: string;
   context?: {
@@ -26,6 +30,8 @@ export interface ChatOptions {
     contextMode?: 'full' | 'smart' | 'minimal';
   };
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  isPro?: boolean; // Deprecated
+  licenseTier?: 'free' | 'standard' | 'pro';
 }
 
 // Unified chunk data type
@@ -46,6 +52,8 @@ export class AIBackendService {
   private grokService: GrokService;
   private moonshotService: MoonshotService;
   private ollamaService: OllamaService;
+  private openaiService: OpenAIService;
+  private anthropicService: AnthropicService;
 
   constructor() {
     this.geminiService = new GeminiService();
@@ -53,6 +61,8 @@ export class AIBackendService {
     this.grokService = new GrokService();
     this.moonshotService = new MoonshotService();
     this.ollamaService = new OllamaService();
+    this.openaiService = new OpenAIService();
+    this.anthropicService = new AnthropicService();
   }
 
   /**
@@ -66,6 +76,8 @@ export class AIBackendService {
     this.grokService.setMainWindow(window);
     this.moonshotService.setMainWindow(window);
     this.ollamaService.setMainWindow(window);
+    this.openaiService.setMainWindow(window);
+    this.anthropicService.setMainWindow(window);
   }
 
   /**
@@ -128,6 +140,8 @@ export class AIBackendService {
       apiKeyLength: options.apiKey?.length || 0,
       hasContext: !!options.context,
       historyLength: options.conversationHistory?.length || 0,
+      isPro: options.isPro,
+      licenseTier: options.licenseTier
     });
 
     switch (provider) {
@@ -159,6 +173,20 @@ export class AIBackendService {
           onChunk as (chunk: OllamaChunkData) => void
         );
 
+      case 'openai':
+        return this.openaiService.chatStream(
+          prompt,
+          options as OpenAIChatOptions,
+          onChunk as (chunk: OpenAIChunkData) => void
+        );
+
+      case 'anthropic':
+        return this.anthropicService.chatStream(
+          prompt,
+          options as AnthropicChatOptions,
+          onChunk as (chunk: AnthropicChunkData) => void
+        );
+
       case 'gemini':
       default:
         return this.geminiService.chatStream(
@@ -180,6 +208,8 @@ export class AIBackendService {
     this.grokService.cancel();
     this.moonshotService.cancel();
     this.ollamaService.cancel();
+    this.openaiService.cancel();
+    this.anthropicService.cancel();
   }
 
   /**
@@ -206,10 +236,22 @@ export class AIBackendService {
         isFree: true
       },
       {
-      id: 'moonshot',
+        id: 'moonshot',
         name: 'Moonshot',
         description: 'Kimi AI with 128K context. China-based servers, may be slower.',
-      isFree: false
+        isFree: false
+      },
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        description: 'Industry standard GPT-4 models. High reliability and quality.',
+        isFree: false
+      },
+      {
+        id: 'anthropic',
+        name: 'Anthropic',
+        description: 'Claude 3.5 Sonnet and Opus. Excellent reasoning and coding capabilities.',
+        isFree: false
       },
       {
         id: 'ollama',
@@ -224,12 +266,14 @@ export class AIBackendService {
    * Get combined list of models from all providers
    */
   async listModels(): Promise<{ success: boolean; models: any[] }> {
-    const [geminiModels, groqModels, grokModels, moonshotModels, ollamaModels] = await Promise.all([
+    const [geminiModels, groqModels, grokModels, moonshotModels, ollamaModels, openaiModels, anthropicModels] = await Promise.all([
       this.geminiService.listModels(),
       this.groqService.listModels(),
       this.grokService.listModels(),
       this.moonshotService.listModels(),
-      this.ollamaService.listModels()
+      this.ollamaService.listModels(),
+      this.openaiService.listModels(),
+      this.anthropicService.listModels()
     ]);
 
     const allModels = [
@@ -237,7 +281,9 @@ export class AIBackendService {
       ...grokModels.models,
       ...groqModels.models,
       ...moonshotModels.models,
-      ...ollamaModels.models
+      ...ollamaModels.models,
+      ...openaiModels.models,
+      ...anthropicModels.models
     ];
 
     return {
@@ -257,7 +303,7 @@ export class AIBackendService {
    * Set provider (for compatibility - actual routing happens in chatStream)
    */
   setProvider(providerName: string): boolean {
-    const validProviders = ['gemini', 'groq', 'grok', 'moonshot', 'ollama'];
+    const validProviders = ['gemini', 'groq', 'grok', 'moonshot', 'ollama', 'openai', 'anthropic'];
     return validProviders.includes(providerName);
   }
 

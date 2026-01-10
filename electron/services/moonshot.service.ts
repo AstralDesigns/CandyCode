@@ -30,6 +30,7 @@ import {
   searchWeb,
 } from './file-operations.service';
 import { SmartContext } from './smart-context.service';
+import { AgenticLoopManager } from './agentic-loop.service';
 
 const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
 
@@ -73,6 +74,7 @@ export interface MoonshotChatOptions {
     contextMode?: 'full' | 'smart' | 'minimal';
   };
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  isPro?: boolean;
 }
 
 export interface MoonshotChunkData {
@@ -109,8 +111,11 @@ export class MoonshotService {
   private onChunkCallback: ((chunk: MoonshotChunkData) => void) | undefined = undefined;
   private baseUrl = 'https://api.moonshot.cn/v1/';
   private taskCompleted = false;
+  private loopManager: AgenticLoopManager;
 
-  constructor() {}
+  constructor() {
+    this.loopManager = new AgenticLoopManager(30);
+  }
 
   setMainWindow(window: BrowserWindow) {
     this.mainWindow = window;
@@ -330,6 +335,7 @@ export class MoonshotService {
 
       if (functionName === 'task_complete') {
         this.taskCompleted = true;
+        this.loopManager.markTaskCompleted();
       }
 
       return { name: functionName, response: result };
@@ -346,6 +352,14 @@ export class MoonshotService {
   ): Promise<void> {
     this.onChunkCallback = onChunk;
     this.taskCompleted = false;
+    
+    // LICENSE CHECK: Set limits based on Pro status
+    const isPro = options.isPro === true;
+    const MAX_LOOPS = isPro ? 30 : 3;
+    
+    // Update loop manager with the new limit
+    this.loopManager = new AgenticLoopManager(MAX_LOOPS);
+    this.loopManager.setIsActive(true);
     
     // CRITICAL: Fresh AbortController for each request
     // This fixes the singleton state issue where previous cancelled requests affect new ones
@@ -389,7 +403,16 @@ export class MoonshotService {
     // BUILD SMART CONTEXT IF PROJECT IS ACTIVE
     if (options.context?.project) {
       const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
-      const selectedContextMode = options.context.contextMode || 'smart';
+      
+      // LICENSE CHECK: Force minimal context if not Pro
+      let selectedContextMode = options.context.contextMode || 'smart';
+      if (!isPro && selectedContextMode !== 'minimal') {
+           selectedContextMode = 'minimal';
+           this.sendChunk({ 
+             type: 'text', 
+             data: '> **Free Tier Notice:** Project Context restricted to "Minimal" mode. Upgrade to Pro for Smart/Full context awareness.\n\n' 
+           });
+      }
 
       if (isStartOfSession || selectedContextMode === 'full') {
         console.log(`[MoonshotService] Building project context with mode: ${selectedContextMode}`);
@@ -414,11 +437,8 @@ export class MoonshotService {
 
     messages.push({ role: 'user', content: contextText + prompt });
 
-    const maxIterations = 30;
-    let iteration = 0;
-
     try {
-      while (iteration < maxIterations && !this.taskCompleted) {
+      while (this.loopManager.shouldContinueLoop()) {
         if (this.cancelController?.signal.aborted) {
           console.log('[MoonshotService] Request aborted');
           this.sendChunk({ type: 'done' });
@@ -426,8 +446,8 @@ export class MoonshotService {
           return;
         }
 
-        iteration++;
-        console.log(`[MoonshotService] Iteration ${iteration}/${maxIterations}`);
+        this.loopManager.incrementIteration();
+        console.log(`[MoonshotService] Iteration ${this.loopManager.getCurrentIteration()}/${MAX_LOOPS}`);
 
         const requestBody = {
           model,
@@ -660,15 +680,19 @@ export class MoonshotService {
         } else if (fullText && !this.taskCompleted) {
           // Got text response but no tool calls - prompt to continue
           messages.push({ role: 'assistant', content: fullText });
-          messages.push({ 
-            role: 'user', 
-            content: 'Continue with the task. Use the available tools to make progress. If done, call task_complete.' 
-          });
         } else if (!fullText && !processedToolCallsThisIteration) {
           // No progress at all - break to avoid infinite loop
           console.log('[MoonshotService] No progress made, ending loop');
           break;
         }
+      }
+
+      // If we exit the loop without completion, notify the user about the limit
+      if (!this.loopManager.getTaskCompleted() && !isPro && this.loopManager.getCurrentIteration() >= MAX_LOOPS) {
+          this.sendChunk({ 
+              type: 'text', 
+              data: '\n\n**Free Tier Limit Reached:** The autonomous agent has stopped after 3 iterations. Upgrade to Pro for extended autonomous coding.' 
+          });
       }
 
       console.log('[MoonshotService] Completed successfully');
@@ -691,6 +715,7 @@ export class MoonshotService {
     if (this.cancelController) {
       this.cancelController.abort();
     }
+    this.loopManager.setIsActive(false);
     this.onChunkCallback = undefined;
     this.sendChunk({ type: 'done' });
   }

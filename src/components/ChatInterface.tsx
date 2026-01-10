@@ -65,7 +65,7 @@ type ChatEvent =
   | { type: 'summary'; content: string; id: string };
 
 export default function ChatInterface() {
-  const { messages, addMessage, contextFiles, contextImages, clearMessages, setMessages, removeContextFile, removeContextImage, setActivePlan, pendingDiffs, diffHistory, acceptedDiffs, rejectedDiffs, acceptDiff, rejectDiff, openFileByPath, artifacts, addArtifact, clearArtifacts, geminiApiKey, deepseekApiKey, groqApiKey, grokApiKey, moonshotApiKey, aiProvider, aiBackendModel, projectContext, contextMode } = useStore();
+  const { messages, addMessage, contextFiles, contextImages, clearMessages, setMessages, removeContextFile, removeContextImage, setActivePlan, pendingDiffs, diffHistory, acceptedDiffs, rejectedDiffs, acceptDiff, rejectDiff, openFileByPath, artifacts, addArtifact, clearArtifacts, geminiApiKey, deepseekApiKey, groqApiKey, grokApiKey, moonshotApiKey, aiProvider, aiBackendModel, projectContext, contextMode, licenseTier } = useStore();
   const sessionService = useChatSessionService();
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -489,6 +489,7 @@ export default function ChatInterface() {
             contextMode: contextMode,
           },
           conversationHistory: messages.map(m => ({ role: m.role, content: m.content })),
+          licenseTier: licenseTier // Pass license tier
         },
         handleChunk
       );

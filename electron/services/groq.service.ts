@@ -18,6 +18,7 @@ import {
   searchWeb,
 } from './file-operations.service';
 import { SmartContext } from './smart-context.service';
+import { AgenticLoopManager } from './agentic-loop.service';
 
 const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
 
@@ -61,6 +62,7 @@ export interface GroqChatOptions {
     contextMode?: 'full' | 'smart' | 'minimal';
   };
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  isPro?: boolean;
 }
 
 export interface GroqChunkData {
@@ -97,8 +99,11 @@ export class GroqService {
   private onChunkCallback: ((chunk: GroqChunkData) => void) | undefined = undefined;
   private baseUrl = 'https://api.groq.com/openai/v1/';
   private taskCompleted = false;
+  private loopManager: AgenticLoopManager;
 
-  constructor() {}
+  constructor() {
+    this.loopManager = new AgenticLoopManager(30);
+  }
 
   setMainWindow(window: BrowserWindow) {
     this.mainWindow = window;
@@ -160,6 +165,7 @@ export class GroqService {
 
       if (functionName === 'task_complete') {
         this.taskCompleted = true;
+        this.loopManager.markTaskCompleted();
       }
 
       return { name: functionName, response: result };
@@ -185,6 +191,14 @@ export class GroqService {
   ): Promise<void> {
     this.onChunkCallback = onChunk;
     this.taskCompleted = false;
+    
+    // LICENSE CHECK: Set limits based on Pro status
+    const isPro = options.isPro === true;
+    const MAX_LOOPS = isPro ? 30 : 3;
+    
+    // Update loop manager with the new limit
+    this.loopManager = new AgenticLoopManager(MAX_LOOPS);
+    this.loopManager.setIsActive(true);
     
     // Fresh AbortController for each request - critical fix for singleton state issue
     this.cancelController = new AbortController();
@@ -216,7 +230,16 @@ export class GroqService {
     // BUILD SMART CONTEXT IF PROJECT IS ACTIVE
     if (options.context?.project) {
       const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
-      const selectedContextMode = options.context.contextMode || 'smart';
+      
+      // LICENSE CHECK: Force minimal context if not Pro
+      let selectedContextMode = options.context.contextMode || 'smart';
+      if (!isPro && selectedContextMode !== 'minimal') {
+           selectedContextMode = 'minimal';
+           this.sendChunk({ 
+             type: 'text', 
+             data: '> **Free Tier Notice:** Project Context restricted to "Minimal" mode. Upgrade to Pro for Smart/Full context awareness.\n\n' 
+           });
+      }
 
       if (isStartOfSession || selectedContextMode === 'full') {
         console.log(`[GroqService] Building project context with mode: ${selectedContextMode}`);
@@ -241,19 +264,16 @@ export class GroqService {
 
     messages.push({ role: 'user', content: contextText + prompt });
 
-    const maxIterations = 30;
-    let iteration = 0;
-
     try {
-      while (iteration < maxIterations && !this.taskCompleted) {
+      while (this.loopManager.shouldContinueLoop()) {
         if (this.cancelController?.signal.aborted) {
           this.sendChunk({ type: 'done' });
           clearTimeout(timeoutId);
           return;
         }
 
-        iteration++;
-        console.log(`[GroqService] Iteration ${iteration}/${maxIterations}`);
+        this.loopManager.incrementIteration();
+        console.log(`[GroqService] Iteration ${this.loopManager.getCurrentIteration()}/${MAX_LOOPS}`);
 
         // Determine max tokens based on model
         let maxTokens = 32768;
@@ -427,10 +447,7 @@ export class GroqService {
                 } else if (finishReason === 'stop' && fullText && !this.taskCompleted) {
                   // Model finished with text but no tool calls - add continuation prompt
                   messages.push({ role: 'assistant', content: fullText });
-                  messages.push({ 
-                    role: 'user', 
-                    content: 'Continue with the task. Use the available tools to make progress. If done, call task_complete.' 
-                  });
+                  // No continuation for now, rely on task_complete
                   fullText = '';
                 }
               }
@@ -441,7 +458,6 @@ export class GroqService {
         }
 
         // Continue loop if tool calls were processed or task not completed
-        // Only break if we have no tool calls, no text, and task is completed
         if (!processedToolCallsThisIteration && !fullText && this.taskCompleted) {
           console.log('[GroqService] Task completed, ending loop');
           break;
@@ -449,7 +465,18 @@ export class GroqService {
         
         if (processedToolCallsThisIteration) {
           console.log('[GroqService] Tool calls processed, continuing loop...');
+        } else if (!fullText && !this.taskCompleted) {
+            // Safety break
+            break;
         }
+      }
+
+      // If we exit the loop without completion, notify the user about the limit
+      if (!this.loopManager.getTaskCompleted() && !isPro && this.loopManager.getCurrentIteration() >= MAX_LOOPS) {
+          this.sendChunk({ 
+              type: 'text', 
+              data: '\n\n**Free Tier Limit Reached:** The autonomous agent has stopped after 3 iterations. Upgrade to Pro for extended autonomous coding.' 
+          });
       }
 
       this.sendChunk({ type: 'done' });
@@ -468,6 +495,7 @@ export class GroqService {
     if (this.cancelController) {
       this.cancelController.abort();
     }
+    this.loopManager.setIsActive(false);
     this.onChunkCallback = undefined;
     this.sendChunk({ type: 'done' });
   }

@@ -11,7 +11,7 @@ export interface AIBackendChunk {
 }
 
 export interface ChatOptions {
-  provider?: 'gemini' | 'groq' | 'grok' | 'moonshot' | 'ollama';
+  provider?: 'gemini' | 'groq' | 'grok' | 'moonshot' | 'ollama' | 'openai' | 'anthropic';
   apiKey?: string;
   model?: string;
   context?: {
@@ -21,6 +21,8 @@ export interface ChatOptions {
     contextMode?: 'full' | 'smart' | 'minimal';
   };
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  isPro?: boolean; // Deprecated
+  licenseTier?: 'free' | 'standard' | 'pro';
 }
 
 export class AIBackendApiService {

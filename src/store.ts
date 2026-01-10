@@ -3,6 +3,7 @@ import { FilePane, FilePaneType } from './models/file-pane.model';
 import { ProjectPlan, PlanStep } from './models/plan.model';
 
 export type ThemeType = 'light' | 'dark' | 'alpha' | 'custom' | 'standard';
+export type LicenseTier = 'free' | 'standard' | 'pro';
 
 export interface CustomTheme {
   id: string;
@@ -105,9 +106,15 @@ interface Store {
   terminalSettings: TerminalSettings;
   setTerminalSettings: (settings: Partial<TerminalSettings>) => void;
 
-  // AI Provider Settings (DeepSeek removed - using dedicated provider services)
-  aiProvider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama';
-  setAIProvider: (provider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama') => void;
+  // License
+  licenseKey: string;
+  licenseTier: LicenseTier;
+  setLicenseKey: (key: string) => void;
+  validateLicense: () => Promise<boolean>;
+
+  // AI Provider Settings
+  aiProvider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic';
+  setAIProvider: (provider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic') => void;
   
   // Provider-specific API keys
   geminiApiKey: string;
@@ -120,6 +127,10 @@ interface Store {
   setGrokApiKey: (key: string) => void;
   moonshotApiKey: string;
   setMoonshotApiKey: (key: string) => void;
+  openaiApiKey: string;
+  setOpenaiApiKey: (key: string) => void;
+  anthropicApiKey: string;
+  setAnthropicApiKey: (key: string) => void;
   
   // AI Backend Model
   aiBackendModel: string;
@@ -137,6 +148,8 @@ interface Store {
   ollamaModels: Array<{ id: string; name: string; desc?: string; limits?: string; installed?: boolean }>;
   refreshOllamaModels: () => Promise<void>;
   geminiModels: Array<{ id: string; name: string; desc?: string; limits?: string }>;
+  openaiModels: Array<{ id: string; name: string; desc?: string; limits?: string }>;
+  anthropicModels: Array<{ id: string; name: string; desc?: string; limits?: string }>;
   
   // Tasks (now managed by chat widgets)
   tasks: Task[];
@@ -212,7 +225,7 @@ interface Store {
   refreshOpenFiles: () => Promise<void>;
 }
 
-export const useStore = create<Store>()((set) => ({
+export const useStore = create<Store>()((set, get) => ({
   // UI State
   sidebarVisible: false,
   chatVisible: false,
@@ -274,6 +287,70 @@ export const useStore = create<Store>()((set) => ({
   setTerminalSettings: (settings) => set((state) => ({
     terminalSettings: { ...state.terminalSettings, ...settings }
   })),
+
+  // License
+  licenseKey: '',
+  licenseTier: 'free',
+  setLicenseKey: (key) => set({ licenseKey: key }),
+  validateLicense: async () => {
+    const { licenseKey } = get();
+    
+    if (!licenseKey) {
+      set({ licenseTier: 'free' });
+      return false;
+    }
+    
+    const key = licenseKey.trim().toUpperCase();
+    
+    // FORMAT: PREFIX-RANDOM(16)-CHECKSUM(4)
+    // Example: ALPHA-PRO-1A2B3C4D5E6F7G8H-9I0J
+    const parts = key.split('-');
+    
+    // Basic structural validation
+    if (parts.length !== 4) {
+       set({ licenseTier: 'free' });
+       return false;
+    }
+    
+    const prefix = parts[0] + '-' + parts[1];
+    const randomPart = parts[2];
+    const checksum = parts[3];
+    
+    // Validate Tier Prefix
+    let tier: LicenseTier = 'free';
+    if (prefix === 'ALPHA-PRO') tier = 'pro';
+    else if (prefix === 'ALPHA-STD') tier = 'standard';
+    else {
+      set({ licenseTier: 'free' });
+      return false;
+    }
+    
+    // Validate Checksum (Simple hash check to prevent random strings)
+    // In a real app, this would verify against a backend or use public-key crypto
+    // Here we use a simple SHA256 slice to verify integrity matching generator.ts
+    try {
+        // Use standard Web Crypto API which is available in modern browsers and Node via polyfills or global
+        // Since we are in Renderer process, window.crypto.subtle is available
+        const msgBuffer = new TextEncoder().encode(randomPart);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+        
+        // Check if last 4 chars match
+        if (hashHex.substring(0, 4) === checksum) {
+             set({ licenseTier: tier });
+             return true;
+        }
+    } catch (e) {
+        console.error("License validation error:", e);
+        // Fallback for environments without crypto.subtle (shouldn't happen in Electron)
+        // Or if we just want to allow the "simple" check for development convenience:
+        // if (randomPart.length === 16 && checksum.length === 4) ...
+    }
+
+    set({ licenseTier: 'free' });
+    return false;
+  },
   
   // AI Provider Settings
   aiProvider: 'gemini',
@@ -282,6 +359,10 @@ export const useStore = create<Store>()((set) => ({
     
     if (provider === 'ollama') {
       newModel = state.ollamaModels.length > 0 ? state.ollamaModels[0].id : 'llama3.2';
+    } else if (provider === 'openai') {
+      newModel = 'gpt-4o';
+    } else if (provider === 'anthropic') {
+      newModel = 'claude-3-5-sonnet-20240620';
     } else {
       newModel = state.availableModels.find(m => m.provider === provider && (m as any).recommended)?.id ||
                  state.availableModels.find(m => m.provider === provider)?.id ||
@@ -302,30 +383,17 @@ export const useStore = create<Store>()((set) => ({
   setGrokApiKey: (key) => set({ grokApiKey: key }),
   moonshotApiKey: '',
   setMoonshotApiKey: (key) => set({ moonshotApiKey: key }),
+  openaiApiKey: '',
+  setOpenaiApiKey: (key) => set({ openaiApiKey: key }),
+  anthropicApiKey: '',
+  setAnthropicApiKey: (key) => set({ anthropicApiKey: key }),
   
   // AI Backend Model
   aiBackendModel: 'gemini-2.5-flash',
   setAIBackendModel: (model) => set({ aiBackendModel: model }),
   
   // Available Models
-  availableModels: [
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', desc: 'State-of-the-art, Pro-grade reasoning at Flash speed', limits: '5 RPM (free tier)', provider: 'gemini', recommended: false },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Fast, 1M context, 65K output - RECOMMENDED', limits: '15 RPM, 1M RPD (free)', provider: 'gemini', recommended: true },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Advanced reasoning, 1M context (slower)', limits: '2 RPM, 50 RPD (free)', provider: 'gemini', recommended: false },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'Most efficient, 1M context', limits: '15 RPM (free)', provider: 'gemini', recommended: false },
-    
-    { id: 'grok-4.1-fast', name: 'Grok 4.1 Fast', desc: 'Optimized for tool-calling and agentic workflows, 2M token context', limits: 'Better rate limits than Groq, optimized for agents', provider: 'grok', recommended: true },
-    { id: 'grok-4.1', name: 'Grok 4.1', desc: 'Latest Grok model with enhanced reasoning and multimodal understanding', limits: 'Better rate limits than Groq', provider: 'grok', recommended: false },
-    { id: 'grok-beta', name: 'Grok Beta', desc: 'Beta model with extended context (legacy)', limits: 'Better rate limits than Groq', provider: 'grok', recommended: false },
-    
-    { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', desc: '128K context, excellent reasoning', limits: 'Fast, better rate limits', provider: 'groq', recommended: true },
-    { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', desc: '128K context, very fast', limits: 'Free tier available', provider: 'groq', recommended: false },
-    { id: 'moonshotai/kimi-k2-instruct', name: 'Kimi K2 Instruct', desc: '131K context, 16K output - low rate limit (10K TPM)', limits: 'Rate limited on free tier', provider: 'groq', recommended: false },
-    
-    { id: 'moonshot-v1-8k', name: 'Moonshot v1 8K', desc: '8K context window, balanced performance', limits: 'Requires API key', provider: 'moonshot', recommended: false },
-    { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K', desc: '32K context window', limits: 'Requires API key', provider: 'moonshot', recommended: false },
-    { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K', desc: '128K context window - RECOMMENDED', limits: 'Requires API key', provider: 'moonshot', recommended: true },
-  ],
+  availableModels: [],
   setAvailableModels: (models) => set({ availableModels: models }),
   refreshModels: async () => {},
   
@@ -347,6 +415,16 @@ export const useStore = create<Store>()((set) => ({
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Fast, 1M context, 65K output - RECOMMENDED', limits: '15 RPM, 1M RPD (free)' },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Advanced reasoning, 1M context (slower)', limits: '2 RPM, 50 RPD (free)' },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'Most efficient, 1M context', limits: '15 RPM (free)' },
+  ],
+  openaiModels: [
+    { id: 'gpt-4o', name: 'GPT-4o', desc: 'Most advanced, multimodal, 128k context', limits: 'Requires OpenAI API Key' },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', desc: 'High capability model, 128k context', limits: 'Requires OpenAI API Key' },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', desc: 'Fast, cost-effective', limits: 'Requires OpenAI API Key' },
+  ],
+  anthropicModels: [
+    { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', desc: 'Highest level of intelligence and capability', limits: 'Requires Anthropic API Key' },
+    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', desc: 'Powerful model for highly complex tasks', limits: 'Requires Anthropic API Key' },
+    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', desc: 'Fastest and most compact model', limits: 'Requires Anthropic API Key' },
   ],
   
   // Tasks
@@ -869,6 +947,8 @@ if (typeof window !== 'undefined') {
       const validGrokModels = ['grok-4.1-fast', 'grok-4.1', 'grok-beta'];
       const validGroqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'moonshotai/kimi-k2-instruct'];
       const validMoonshotModels = ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'];
+      const validOpenAIModels = ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'];
+      const validAnthropicModels = ['claude-3-5-sonnet-20240620', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'];
       
       let model = parsed.aiBackendModel || 'gemini-2.5-flash';
       let provider = parsed.aiProvider || 'gemini';
@@ -906,21 +986,35 @@ if (typeof window !== 'undefined') {
           model = 'llama-3.3-70b-versatile';
         } else if (provider === 'moonshot' && !validMoonshotModels.includes(model)) {
           model = 'moonshot-v1-128k';
+        } else if (provider === 'openai' && !validOpenAIModels.includes(model)) {
+          model = 'gpt-4o';
+        } else if (provider === 'anthropic' && !validAnthropicModels.includes(model)) {
+          model = 'claude-3-5-sonnet-20240620';
         }
       }
       
+      // Determine correct license tier from old isPro
+      let tier: LicenseTier = 'free';
+      if (parsed.isPro) tier = 'pro';
+      // If we have a license key but tier is default/free, try to upgrade
+      const storedKey = parsed.licenseKey || '';
+      if (storedKey.trim().toUpperCase().startsWith('ALPHA-STD-')) tier = 'standard';
+      else if (storedKey.trim().toUpperCase().startsWith('ALPHA-PRO-')) tier = 'pro';
+
       useStore.setState({
         theme: parsed.theme === 'aether' ? 'alpha' : (parsed.theme || 'alpha'),
         customThemes: parsed.customThemes || [],
         activeCustomThemeId: parsed.activeCustomThemeId || null,
         activeStandardThemeId: parsed.activeStandardThemeId || null,
-        aiProvider: provider as 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama',
+        aiProvider: provider as any,
         ollamaModels: parsed.ollamaModels || [],
         geminiApiKey: parsed.geminiApiKey || '',
         deepseekApiKey: parsed.deepseekApiKey || '',
         groqApiKey: parsed.groqApiKey || '',
         grokApiKey: parsed.grokApiKey || '',
         moonshotApiKey: parsed.moonshotApiKey || '',
+        openaiApiKey: parsed.openaiApiKey || '',
+        anthropicApiKey: parsed.anthropicApiKey || '',
         aiBackendModel: model,
         terminalSettings: parsed.terminalSettings || {
           fontSize: 13,
@@ -929,6 +1023,8 @@ if (typeof window !== 'undefined') {
           fontFamily: '"JetBrainsMono Nerd Font", "FiraCode Nerd Font", "MesloLGS NF", "Cascadia Code", Consolas, monospace',
           shell: ''
         },
+        licenseKey: storedKey,
+        licenseTier: tier,
         tasks: parsed.tasks || [],
         messages: parsed.messages || [],
         sidebarWidth: parsed.sidebarWidth || 256,
@@ -953,9 +1049,13 @@ if (typeof window !== 'undefined') {
         groqApiKey: state.groqApiKey,
         grokApiKey: state.grokApiKey,
         moonshotApiKey: state.moonshotApiKey,
+        openaiApiKey: state.openaiApiKey,
+        anthropicApiKey: state.anthropicApiKey,
         ollamaModels: state.ollamaModels,
         aiBackendModel: state.aiBackendModel,
         terminalSettings: state.terminalSettings,
+        licenseKey: state.licenseKey,
+        isPro: state.licenseTier === 'pro', // Backward compatibility
         tasks: state.tasks,
         messages: state.messages.map(msg => ({
           id: msg.id,

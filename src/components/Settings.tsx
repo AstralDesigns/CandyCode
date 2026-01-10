@@ -1,9 +1,9 @@
-import { X, Save, Palette, Cpu, ExternalLink, Key, ChevronDown, Plus, Trash2, Edit2, Check, Zap, Globe, Brain, Moon, Server, Search, Download, Loader2, TerminalSquare } from 'lucide-react';
+import { X, Save, Palette, Cpu, ExternalLink, Key, ChevronDown, Plus, Trash2, Edit2, Check, Zap, Globe, Brain, Moon, Server, Search, Download, Loader2, TerminalSquare, CreditCard, Lock, Shield, Bot, Sparkles, Star } from 'lucide-react';
 import { useStore, CustomTheme, TerminalSettings } from '../store';
 import { useState, useEffect, useRef } from 'react';
 import Dropdown from './ui/Dropdown';
 
-type Tab = 'themes' | 'terminal' | 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama';
+type Tab = 'themes' | 'terminal' | 'license' | 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic';
 
 const DEFAULT_CUSTOM_THEME: Omit<CustomTheme, 'id'> = {
   name: 'New Custom Theme',
@@ -178,6 +178,60 @@ const MOONSHOT_MODELS = [
   }
 ];
 
+const OPENAI_MODELS = [
+  { 
+    id: 'gpt-4o', 
+    name: 'GPT-4o', 
+    desc: 'Most advanced, multimodal, 128k context',
+    limits: 'Requires OpenAI API Key',
+    provider: 'openai' as const,
+    recommended: true
+  },
+  { 
+    id: 'gpt-4-turbo', 
+    name: 'GPT-4 Turbo', 
+    desc: 'High capability model, 128k context',
+    limits: 'Requires OpenAI API Key',
+    provider: 'openai' as const,
+    recommended: false
+  },
+  { 
+    id: 'gpt-3.5-turbo', 
+    name: 'GPT-3.5 Turbo', 
+    desc: 'Fast, cost-effective',
+    limits: 'Requires OpenAI API Key',
+    provider: 'openai' as const,
+    recommended: false
+  }
+];
+
+const ANTHROPIC_MODELS = [
+  { 
+    id: 'claude-3-5-sonnet-20240620', 
+    name: 'Claude 3.5 Sonnet', 
+    desc: 'Highest level of intelligence and capability',
+    limits: 'Requires Anthropic API Key',
+    provider: 'anthropic' as const,
+    recommended: true
+  },
+  { 
+    id: 'claude-3-opus-20240229', 
+    name: 'Claude 3 Opus', 
+    desc: 'Powerful model for highly complex tasks',
+    limits: 'Requires Anthropic API Key',
+    provider: 'anthropic' as const,
+    recommended: false
+  },
+  { 
+    id: 'claude-3-haiku-20240307', 
+    name: 'Claude 3 Haiku', 
+    desc: 'Fastest and most compact model',
+    limits: 'Requires Anthropic API Key',
+    provider: 'anthropic' as const,
+    recommended: false
+  }
+];
+
 export default function Settings() {
   const { 
     showSettings, 
@@ -206,11 +260,19 @@ export default function Settings() {
     setGrokApiKey,
     moonshotApiKey,
     setMoonshotApiKey,
+    openaiApiKey,
+    setOpenaiApiKey,
+    anthropicApiKey,
+    setAnthropicApiKey,
     ollamaModels,
     activeSettingsTab,
     setActiveSettingsTab,
     terminalSettings,
-    setTerminalSettings
+    setTerminalSettings,
+    licenseKey,
+    licenseTier,
+    setLicenseKey,
+    validateLicense
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<Tab>(activeSettingsTab as Tab);
@@ -225,6 +287,11 @@ export default function Settings() {
   const [grokKey, setGrokKey] = useState(grokApiKey);
   const [geminiKey, setGeminiKey] = useState(geminiApiKey);
   const [moonshotKey, setMoonshotKey] = useState(moonshotApiKey);
+  const [openaiKey, setOpenaiKey] = useState(openaiApiKey);
+  const [anthropicKey, setAnthropicKey] = useState(anthropicApiKey);
+  const [localLicenseKey, setLocalLicenseKey] = useState(licenseKey);
+  const [validatingLicense, setValidatingLicense] = useState(false);
+  
   const [selectedModel, setSelectedModel] = useState(aiBackendModel);
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
   const [editingTheme, setEditingTheme] = useState<Omit<CustomTheme, 'id'>>(DEFAULT_CUSTOM_THEME);
@@ -246,6 +313,8 @@ export default function Settings() {
       case 'groq': return GROQ_MODELS;
       case 'gemini': return GEMINI_MODELS;
       case 'moonshot': return MOONSHOT_MODELS;
+      case 'openai': return OPENAI_MODELS;
+      case 'anthropic': return ANTHROPIC_MODELS;
       case 'ollama': return Array.isArray(ollamaModels) ? ollamaModels : [];
       default: return [];
     }
@@ -257,16 +326,19 @@ export default function Settings() {
     setGrokKey(grokApiKey);
     setGeminiKey(geminiApiKey);
     setMoonshotKey(moonshotApiKey);
+    setOpenaiKey(openaiApiKey);
+    setAnthropicKey(anthropicApiKey);
+    setLocalLicenseKey(licenseKey);
     
     // When opening settings, sync internal tab state
     if (showSettings) {
       setActiveTab(activeSettingsTab as Tab);
     }
-  }, [deepseekApiKey, groqApiKey, grokApiKey, geminiApiKey, moonshotApiKey, showSettings, activeSettingsTab]);
+  }, [deepseekApiKey, groqApiKey, grokApiKey, geminiApiKey, moonshotApiKey, openaiApiKey, anthropicApiKey, licenseKey, showSettings, activeSettingsTab]);
 
   // Sync selectedModel with aiBackendModel initially, but respect tab switches
   useEffect(() => {
-    if (showSettings && activeTab !== 'themes' && activeTab !== 'terminal') {
+    if (showSettings && activeTab !== 'themes' && activeTab !== 'terminal' && activeTab !== 'license') {
       const models = getModelsForProvider();
       const currentModelId = selectedModel;
       
@@ -373,17 +445,35 @@ export default function Settings() {
     }
     setDeletingModel(null);
   };
+  
+  const handleValidateLicense = async () => {
+    setValidatingLicense(true);
+    // Update store with current input first
+    setLicenseKey(localLicenseKey);
+    // Trigger validation logic in store (mock for now)
+    await validateLicense();
+    setValidatingLicense(false);
+  };
+  
+  const handleRemoveLicense = () => {
+    setLocalLicenseKey('');
+    setLicenseKey('');
+    useStore.setState({ licenseTier: 'free' });
+  };
 
   const handleSave = async () => {
     setDeepseekApiKey(deepseekKey);
     setGroqApiKey(groqKey);
     setGrokApiKey(grokKey);
-    setGeminiApiKey(geminiKey);
+    setGeminiKey(geminiKey);
     setMoonshotApiKey(moonshotKey);
+    setOpenaiApiKey(openaiKey);
+    setAnthropicApiKey(anthropicKey);
+    setLicenseKey(localLicenseKey);
     
-    setAIProvider(activeTab === 'themes' || activeTab === 'terminal' ? aiProvider : activeTab);
+    setAIProvider(activeTab === 'themes' || activeTab === 'terminal' || activeTab === 'license' ? aiProvider : activeTab);
     
-    if (activeTab !== 'themes' && activeTab !== 'terminal') {
+    if (activeTab !== 'themes' && activeTab !== 'terminal' && activeTab !== 'license') {
       const models = getModelsForProvider();
       const validModel = models.some(m => m.id === selectedModel) 
         ? selectedModel 
@@ -483,6 +573,8 @@ export default function Settings() {
       case 'gemini': return 'Gemini';
       case 'moonshot': return 'Moonshot';
       case 'ollama': return 'Ollama';
+      case 'openai': return 'OpenAI';
+      case 'anthropic': return 'Anthropic';
       default: return '';
     }
   };
@@ -493,6 +585,8 @@ export default function Settings() {
       case 'groq': return groqKey;
       case 'gemini': return geminiKey;
       case 'moonshot': return moonshotKey;
+      case 'openai': return openaiKey;
+      case 'anthropic': return anthropicKey;
       default: return '';
     }
   };
@@ -503,6 +597,8 @@ export default function Settings() {
       case 'groq': setGroqKey(val); break;
       case 'gemini': setGeminiKey(val); break;
       case 'moonshot': setMoonshotKey(val); break;
+      case 'openai': setOpenaiKey(val); break;
+      case 'anthropic': setAnthropicKey(val); break;
     }
   };
 
@@ -512,6 +608,8 @@ export default function Settings() {
       case 'groq': return 'https://console.groq.com/keys';
       case 'gemini': return 'https://aistudio.google.com/apikey';
       case 'moonshot': return 'https://platform.moonshot.cn/console/api-keys';
+      case 'openai': return 'https://platform.openai.com/api-keys';
+      case 'anthropic': return 'https://console.anthropic.com/settings/keys';
       default: return '';
     }
   };
@@ -523,6 +621,8 @@ export default function Settings() {
       case 'gemini': return <Globe className="w-4 h-4" />;
       case 'moonshot': return <Moon className="w-4 h-4" />;
       case 'ollama': return <Server className="w-4 h-4" />;
+      case 'openai': return <Sparkles className="w-4 h-4" />;
+      case 'anthropic': return <Bot className="w-4 h-4" />;
       default: return <Cpu className="w-4 h-4" />;
     }
   };
@@ -534,6 +634,8 @@ export default function Settings() {
       case 'gemini': return 'Native Gemini API with 1M+ context. Best for complex tasks. RECOMMENDED.';
       case 'moonshot': return 'Kimi AI with 128K context. China-based servers (may be slower).';
       case 'ollama': return 'Run models locally for privacy and offline use. No API keys required. Optimized for mid-tier to high-end hardware.';
+      case 'openai': return 'Industry standard GPT-4 models. High reliability and quality.';
+      case 'anthropic': return 'Claude 3.5 Sonnet and Opus. Excellent reasoning and coding capabilities.';
       default: return '';
     }
   };
@@ -571,7 +673,9 @@ export default function Settings() {
         <div className="flex flex-col md:flex-row h-full overflow-hidden">
           {/* Sidebar Tabs */}
           <div className="w-full md:w-56 p-2 border-b md:border-b-0 md:border-r overflow-y-auto space-y-1 shrink-0" style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
-            <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-3 py-2">Appearance</div>
+            <button onClick={() => setActiveTab('license')} className={tabClass('license')}>
+              <CreditCard className="w-4 h-4" /> License
+            </button>
             <button onClick={() => setActiveTab('themes')} className={tabClass('themes')}>
               <Palette className="w-4 h-4" /> Themes
             </button>
@@ -580,14 +684,20 @@ export default function Settings() {
             </button>
             
             <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-3 py-2 mt-4">AI Providers</div>
+            <button onClick={() => setActiveTab('gemini')} className={tabClass('gemini')}>
+              <Globe className="w-4 h-4" /> Gemini
+            </button>
+            <button onClick={() => setActiveTab('openai')} className={tabClass('openai')}>
+              <Sparkles className="w-4 h-4" /> OpenAI
+            </button>
+            <button onClick={() => setActiveTab('anthropic')} className={tabClass('anthropic')}>
+              <Bot className="w-4 h-4" /> Anthropic
+            </button>
             <button onClick={() => setActiveTab('grok')} className={tabClass('grok')}>
               <Brain className="w-4 h-4" /> Grok (xAI)
             </button>
             <button onClick={() => setActiveTab('groq')} className={tabClass('groq')}>
               <Zap className="w-4 h-4" /> Groq
-            </button>
-            <button onClick={() => setActiveTab('gemini')} className={tabClass('gemini')}>
-              <Globe className="w-4 h-4" /> Gemini
             </button>
             <button onClick={() => setActiveTab('moonshot')} className={tabClass('moonshot')}>
               <Moon className="w-4 h-4" /> Moonshot
@@ -598,6 +708,126 @@ export default function Settings() {
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+            
+            {/* License Tab */}
+            {activeTab === 'license' && (
+              <div className="space-y-6">
+                <div className="p-4 bg-white/5 border border-border rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-lg bg-white/10">
+                      <Shield className="w-6 h-6 text-accent" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-foreground mb-1">AlphaStudio License</h3>
+                      <p className="text-xs text-muted leading-relaxed">
+                        Unlock autonomous agentic capabilities, unlimited loops, and smart context compression.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Free Tier */}
+                  <div className={`p-4 rounded-xl border flex flex-col h-full transition-all ${licenseTier === 'free' ? 'border-accent bg-accent/5' : 'border-border bg-white/5 opacity-70'}`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-semibold text-foreground text-sm">Free Tier</h4>
+                      {licenseTier === 'free' && <span className="text-[9px] bg-accent text-white px-2 py-0.5 rounded-full font-bold">CURRENT</span>}
+                    </div>
+                    <ul className="space-y-2 text-xs text-muted mt-2 flex-1">
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-foreground" /> Unlimited Chat</li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-foreground" /> BYO Keys</li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-foreground" /> Local Models</li>
+                      <li className="flex items-center gap-2 text-amber-400"><Lock className="w-3 h-3" /> Max 3 Loops</li>
+                      <li className="flex items-center gap-2 text-amber-400"><Lock className="w-3 h-3" /> Basic Context</li>
+                    </ul>
+                  </div>
+
+                  {/* Standard Tier */}
+                  <div className={`p-4 rounded-xl border flex flex-col h-full transition-all ${licenseTier === 'standard' ? 'border-blue-500 bg-blue-500/10' : 'border-border bg-white/5'}`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-semibold text-foreground text-sm">Standard</h4>
+                      {licenseTier === 'standard' && <span className="text-[9px] bg-blue-500 text-white px-2 py-0.5 rounded-full font-bold">CURRENT</span>}
+                    </div>
+                    <ul className="space-y-2 text-xs text-muted mt-2 flex-1">
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-blue-400" /> <b>15 Auto Loops</b></li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-blue-400" /> <b>Smart Context</b></li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-blue-400" /> Standard Support</li>
+                    </ul>
+                    {licenseTier !== 'standard' && licenseTier !== 'pro' && (
+                      <a 
+                        href="https://buy.stripe.com/test_standard" 
+                        target="_blank"
+                        rel="noopener noreferrer" 
+                        className="mt-4 w-full py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
+                      >
+                        Buy ($19) <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Pro Tier */}
+                  <div className={`p-4 rounded-xl border flex flex-col h-full transition-all ${licenseTier === 'pro' ? 'border-green-500 bg-green-500/10' : 'border-border bg-white/5'}`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-semibold text-foreground text-sm">Pro License</h4>
+                      {licenseTier === 'pro' && <span className="text-[9px] bg-green-500 text-white px-2 py-0.5 rounded-full font-bold">CURRENT</span>}
+                    </div>
+                    <ul className="space-y-2 text-xs text-muted mt-2 flex-1">
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> <b>50 Auto Loops</b></li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> <b>Full Context</b></li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> Priority Support</li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> Early Access</li>
+                    </ul>
+                    
+                    {licenseTier !== 'pro' && (
+                      <a 
+                        href="https://buy.stripe.com/test_pro" 
+                        target="_blank"
+                        rel="noopener noreferrer" 
+                        className="mt-4 w-full py-2 bg-green-600 text-white hover:bg-green-500 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
+                      >
+                        Buy ($49) <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border-t pt-6" style={{ borderColor: 'var(--border-color)' }}>
+                  <label className="block text-sm font-medium text-muted mb-2">License Key</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={localLicenseKey}
+                      onChange={(e) => setLocalLicenseKey(e.target.value)}
+                      placeholder="Enter license key (e.g. ALPHA-PRO-... or ALPHA-STD-...)"
+                      className="flex-1 px-4 py-2.5 bg-white/5 border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all"
+                      disabled={licenseTier !== 'free'}
+                    />
+                    {licenseTier !== 'free' ? (
+                      <button 
+                        onClick={handleRemoveLicense}
+                        className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-medium transition-colors"
+                      >
+                        Deactivate
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={handleValidateLicense}
+                        disabled={!localLicenseKey || validatingLicense}
+                        className="px-6 py-2 bg-accent hover:brightness-110 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {validatingLicense ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Activate'}
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-2 text-[10px] text-muted">
+                    {licenseTier !== 'free' 
+                      ? `Your ${licenseTier.charAt(0).toUpperCase() + licenseTier.slice(1)} license is active. Thank you for supporting AlphaStudio!` 
+                      : "Enter a key starting with 'ALPHA-PRO-' or 'ALPHA-STD-' to activate features."}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Themes Tab */}
             {activeTab === 'themes' && (
               <div className="space-y-6">
@@ -707,7 +937,7 @@ export default function Settings() {
                     </div>
                   </div>
                 )}
-
+                
                 {/* Theme Editor Modal */}
                 {editingThemeId && (
                   <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-center justify-center p-4">
@@ -875,7 +1105,7 @@ export default function Settings() {
             )}
 
             {/* API Provider Tabs */}
-            {(activeTab === 'grok' || activeTab === 'groq' || activeTab === 'gemini' || activeTab === 'moonshot') && (
+            {(activeTab === 'grok' || activeTab === 'groq' || activeTab === 'gemini' || activeTab === 'moonshot' || activeTab === 'openai' || activeTab === 'anthropic') && (
               <div className="space-y-8">
                 <div className="p-4 bg-white/5 border border-border rounded-lg">
                   <div className="flex items-start gap-3">
@@ -921,6 +1151,8 @@ export default function Settings() {
                     {activeTab === 'groq' && 'Llama 3.3 70B (128K context)'}
                     {activeTab === 'gemini' && 'Gemini 2.5 Flash (1M context)'}
                     {activeTab === 'moonshot' && 'Moonshot v1 128K (128K context)'}
+                    {activeTab === 'openai' && 'GPT-4o (Most capable)'}
+                    {activeTab === 'anthropic' && 'Claude 3.5 Sonnet (Best for coding)'}
                     {' '}is recommended.
                   </p>
                 </div>
@@ -972,6 +1204,8 @@ export default function Settings() {
                           case 'groq': setGroqApiKey(key); break;
                           case 'gemini': setGeminiApiKey(key); break;
                           case 'moonshot': setMoonshotApiKey(key); break;
+                          case 'openai': setOpenaiKey(key); break;
+                          case 'anthropic': setAnthropicKey(key); break;
                         }
                       }
                       
@@ -1023,6 +1257,8 @@ export default function Settings() {
                         {activeTab === 'groq' && ' Groq provides extremely fast inference with Llama 3.3 70B (128K context).'}
                         {activeTab === 'gemini' && ' Gemini offers 1M+ context window for complex projects.'}
                         {activeTab === 'moonshot' && ' Moonshot is optimized for Chinese-language understanding.'}
+                        {activeTab === 'openai' && ' OpenAI provides the most reliable tool execution and reasoning capability.'}
+                        {activeTab === 'anthropic' && ' Claude 3.5 Sonnet excels at coding tasks and complex reasoning.'}
                       </p>
                     </div>
                   </div>

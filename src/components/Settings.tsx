@@ -1,9 +1,9 @@
-import { X, Save, Palette, Cpu, ExternalLink, Key, ChevronDown, Plus, Trash2, Edit2, Check, Zap, Globe, Brain, Moon, Server, Search, Download, Loader2, TerminalSquare, CreditCard, Lock, Shield, Bot, Sparkles, Star } from 'lucide-react';
+import { X, Save, Palette, Cpu, ExternalLink, Key, Plus, Trash2, Edit2, Check, Zap, Globe, Brain, Moon, Server, Search, Download, Loader2, TerminalSquare, CreditCard, Lock, Shield, Bot, Sparkles, Wind, Coins } from 'lucide-react';
 import { useStore, CustomTheme, TerminalSettings } from '../store';
 import { useState, useEffect, useRef } from 'react';
 import Dropdown from './ui/Dropdown';
 
-type Tab = 'themes' | 'terminal' | 'license' | 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic';
+type Tab = 'themes' | 'terminal' | 'license' | 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic' | 'windsurf';
 
 const DEFAULT_CUSTOM_THEME: Omit<CustomTheme, 'id'> = {
   name: 'New Custom Theme',
@@ -232,6 +232,25 @@ const ANTHROPIC_MODELS = [
   }
 ];
 
+const WINDSURF_MODELS = [
+  { 
+    id: 'swe-1.5', 
+    name: 'SWE-1.5 (Fast Agent)', 
+    desc: 'Advanced agent model with superior reasoning and tool-calling',
+    limits: 'Credit-based or BYOK',
+    provider: 'windsurf' as const,
+    recommended: true
+  },
+  { 
+    id: 'swe-1-lite', 
+    name: 'SWE-1 Lite', 
+    desc: 'Lightweight agent model for quick tasks',
+    limits: 'Zero-credit model',
+    provider: 'windsurf' as const,
+    recommended: false
+  }
+];
+
 export default function Settings() {
   const { 
     showSettings, 
@@ -264,6 +283,16 @@ export default function Settings() {
     setOpenaiApiKey,
     anthropicApiKey,
     setAnthropicApiKey,
+    windsurfApiKey,
+    setWindsurfApiKey,
+    windsurfServiceKey,
+    setWindsurfServiceKey,
+    windsurfBYOKProvider,
+    setWindsurfBYOKProvider,
+    windsurfBYOKApiKey,
+    setWindsurfBYOKApiKey,
+    windsurfUseBYOK,
+    setWindsurfUseBYOK,
     ollamaModels,
     activeSettingsTab,
     setActiveSettingsTab,
@@ -289,6 +318,13 @@ export default function Settings() {
   const [moonshotKey, setMoonshotKey] = useState(moonshotApiKey);
   const [openaiKey, setOpenaiKey] = useState(openaiApiKey);
   const [anthropicKey, setAnthropicKey] = useState(anthropicApiKey);
+  const [windsurfKey, setWindsurfKey] = useState(windsurfApiKey);
+  const [windsurfServiceKeyValue, setWindsurfServiceKeyValue] = useState(windsurfServiceKey);
+  const [windsurfBYOKProviderValue, setWindsurfBYOKProviderValue] = useState(windsurfBYOKProvider || 'openai');
+  const [windsurfBYOKKeyValue, setWindsurfBYOKKeyValue] = useState(windsurfBYOKApiKey);
+  const [windsurfUseBYOKValue, setWindsurfUseBYOKValue] = useState(windsurfUseBYOK);
+  const [windsurfCredits, setWindsurfCredits] = useState<number | null>(null);
+  const [loadingCredits, setLoadingCredits] = useState(false);
   const [localLicenseKey, setLocalLicenseKey] = useState(licenseKey);
   const [validatingLicense, setValidatingLicense] = useState(false);
   
@@ -305,6 +341,43 @@ export default function Settings() {
   const [pullProgress, setPullProgress] = useState<string>('');
   const [deletingModel, setDeletingModel] = useState<string | null>(null);
 
+  const checkWindsurfCredits = async () => {
+    if (!windsurfKey || windsurfUseBYOKValue) {
+      setWindsurfCredits(null);
+      return;
+    }
+
+    setLoadingCredits(true);
+    try {
+      const response = await fetch('https://server.codeium.com/api/v1/user/credits', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${windsurfKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setWindsurfCredits(data.credits || 0);
+      } else {
+        setWindsurfCredits(null);
+      }
+    } catch (error) {
+      console.error('Failed to fetch Windsurf credits:', error);
+      setWindsurfCredits(null);
+    } finally {
+      setLoadingCredits(false);
+    }
+  };
+
+  // Check credits when Windsurf tab is active and key is available
+  useEffect(() => {
+    if (activeTab === 'windsurf' && windsurfKey && !windsurfUseBYOKValue) {
+      checkWindsurfCredits();
+    }
+  }, [activeTab, windsurfKey, windsurfUseBYOKValue]);
+
   const containerRef = useRef<HTMLDivElement>(null);
 
   const getModelsForProvider = () => {
@@ -315,6 +388,7 @@ export default function Settings() {
       case 'moonshot': return MOONSHOT_MODELS;
       case 'openai': return OPENAI_MODELS;
       case 'anthropic': return ANTHROPIC_MODELS;
+      case 'windsurf': return WINDSURF_MODELS;
       case 'ollama': return Array.isArray(ollamaModels) ? ollamaModels : [];
       default: return [];
     }
@@ -465,10 +539,15 @@ export default function Settings() {
     setDeepseekApiKey(deepseekKey);
     setGroqApiKey(groqKey);
     setGrokApiKey(grokKey);
-    setGeminiKey(geminiKey);
+    setGeminiApiKey(geminiKey);
     setMoonshotApiKey(moonshotKey);
     setOpenaiApiKey(openaiKey);
     setAnthropicApiKey(anthropicKey);
+    setWindsurfApiKey(windsurfKey);
+    setWindsurfServiceKey(windsurfServiceKeyValue);
+    setWindsurfBYOKProvider(windsurfBYOKProviderValue as any);
+    setWindsurfBYOKApiKey(windsurfBYOKKeyValue);
+    setWindsurfUseBYOK(windsurfUseBYOKValue);
     setLicenseKey(localLicenseKey);
     
     setAIProvider(activeTab === 'themes' || activeTab === 'terminal' || activeTab === 'license' ? aiProvider : activeTab);
@@ -575,6 +654,7 @@ export default function Settings() {
       case 'ollama': return 'Ollama';
       case 'openai': return 'OpenAI';
       case 'anthropic': return 'Anthropic';
+      case 'windsurf': return 'Windsurf';
       default: return '';
     }
   };
@@ -587,6 +667,7 @@ export default function Settings() {
       case 'moonshot': return moonshotKey;
       case 'openai': return openaiKey;
       case 'anthropic': return anthropicKey;
+      case 'windsurf': return windsurfKey;
       default: return '';
     }
   };
@@ -599,6 +680,7 @@ export default function Settings() {
       case 'moonshot': setMoonshotKey(val); break;
       case 'openai': setOpenaiKey(val); break;
       case 'anthropic': setAnthropicKey(val); break;
+      case 'windsurf': setWindsurfKey(val); break;
     }
   };
 
@@ -610,6 +692,7 @@ export default function Settings() {
       case 'moonshot': return 'https://platform.moonshot.cn/console/api-keys';
       case 'openai': return 'https://platform.openai.com/api-keys';
       case 'anthropic': return 'https://console.anthropic.com/settings/keys';
+      case 'windsurf': return 'https://windsurf.com/';
       default: return '';
     }
   };
@@ -623,6 +706,7 @@ export default function Settings() {
       case 'ollama': return <Server className="w-4 h-4" />;
       case 'openai': return <Sparkles className="w-4 h-4" />;
       case 'anthropic': return <Bot className="w-4 h-4" />;
+      case 'windsurf': return <Wind className="w-4 h-4" />;
       default: return <Cpu className="w-4 h-4" />;
     }
   };
@@ -636,6 +720,7 @@ export default function Settings() {
       case 'ollama': return 'Run models locally for privacy and offline use. No API keys required. Optimized for mid-tier to high-end hardware.';
       case 'openai': return 'Industry standard GPT-4 models. High reliability and quality.';
       case 'anthropic': return 'Claude 3.5 Sonnet and Opus. Excellent reasoning and coding capabilities.';
+      case 'windsurf': return 'Advanced AI agent with superior reasoning and tool-calling. Free tier available with BYOK support.';
       default: return '';
     }
   };
@@ -692,6 +777,9 @@ export default function Settings() {
             </button>
             <button onClick={() => setActiveTab('anthropic')} className={tabClass('anthropic')}>
               <Bot className="w-4 h-4" /> Anthropic
+            </button>
+            <button onClick={() => setActiveTab('windsurf')} className={tabClass('windsurf')}>
+              <Wind className="w-4 h-4" /> Windsurf
             </button>
             <button onClick={() => setActiveTab('grok')} className={tabClass('grok')}>
               <Brain className="w-4 h-4" /> Grok (xAI)
@@ -1105,7 +1193,7 @@ export default function Settings() {
             )}
 
             {/* API Provider Tabs */}
-            {(activeTab === 'grok' || activeTab === 'groq' || activeTab === 'gemini' || activeTab === 'moonshot' || activeTab === 'openai' || activeTab === 'anthropic') && (
+            {(activeTab === 'grok' || activeTab === 'groq' || activeTab === 'gemini' || activeTab === 'moonshot' || activeTab === 'openai' || activeTab === 'anthropic' || activeTab === 'windsurf') && (
               <div className="space-y-8">
                 <div className="p-4 bg-white/5 border border-border rounded-lg">
                   <div className="flex items-start gap-3">
@@ -1153,9 +1241,113 @@ export default function Settings() {
                     {activeTab === 'moonshot' && 'Moonshot v1 128K (128K context)'}
                     {activeTab === 'openai' && 'GPT-4o (Most capable)'}
                     {activeTab === 'anthropic' && 'Claude 3.5 Sonnet (Best for coding)'}
+                    {activeTab === 'windsurf' && 'SWE-1.5 (Advanced agent with superior reasoning)'}
                     {' '}is recommended.
                   </p>
                 </div>
+
+                {/* Windsurf-specific BYOK settings */}
+                {activeTab === 'windsurf' && (
+                  <div className="space-y-4">
+                    {/* Credit Balance Display */}
+                    {!windsurfUseBYOKValue && (
+                      <div className="p-4 bg-white/5 border border-border rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 text-sm font-medium text-muted">
+                            <Coins className="w-4 h-4 text-accent" />
+                            Credit Balance
+                          </div>
+                          <button
+                            onClick={checkWindsurfCredits}
+                            disabled={loadingCredits || !windsurfKey}
+                            className="text-xs px-2 py-1 bg-white/10 hover:bg-white/20 rounded transition-all disabled:opacity-50"
+                          >
+                            {loadingCredits ? 'Checking...' : 'Refresh'}
+                          </button>
+                        </div>
+                        <div className="text-xs text-muted">
+                          {windsurfCredits !== null ? (
+                            <span className="text-foreground font-medium">{windsurfCredits} credits</span>
+                          ) : (
+                            <span className="text-muted">Enter API key to check balance</span>
+                          )}
+                        </div>
+                        <p className="mt-2 text-[11px] text-muted leading-relaxed">
+                          Free tier: 25 credits/month + unlimited SWE-1 Lite. 
+                          <a 
+                            href="https://windsurf.com/credits" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-accent hover:underline ml-1"
+                          >
+                            Purchase more credits →
+                          </a>
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="p-4 bg-white/5 border border-border rounded-lg">
+                      <div className="flex items-center gap-3 mb-3">
+                        <label className="flex items-center gap-2 text-sm font-medium text-muted">
+                          <Key className="w-4 h-4 text-accent" />
+                          Use BYOK (Bring Your Own Key)
+                        </label>
+                        <input
+                          type="checkbox"
+                          checked={windsurfUseBYOKValue}
+                          onChange={(e) => setWindsurfUseBYOKValue(e.target.checked)}
+                          className="rounded border-border bg-white/5 text-accent focus:ring-accent"
+                        />
+                      </div>
+                      <p className="text-xs text-muted leading-relaxed">
+                        Use your own API key from OpenAI, Anthropic, or Google instead of Windsurf credits.
+                        This gives you unlimited usage with your provider's pricing.
+                      </p>
+                    </div>
+
+                    {windsurfUseBYOKValue && (
+                      <div className="p-4 bg-white/5 border border-border rounded-lg space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-muted mb-2">
+                            BYOK Provider
+                          </label>
+                          <Dropdown
+                            value={windsurfBYOKProviderValue}
+                            onChange={(val) => setWindsurfBYOKProviderValue(val as any)}
+                            options={[
+                              { label: 'OpenAI', value: 'openai' },
+                              { label: 'Anthropic', value: 'anthropic' },
+                              { label: 'Google', value: 'google' }
+                            ]}
+                            className="w-full"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-muted mb-2">
+                            {windsurfBYOKProviderValue.charAt(0).toUpperCase() + windsurfBYOKProviderValue.slice(1)} API Key
+                          </label>
+                          <div className="relative group">
+                            <input
+                              type="password"
+                              value={windsurfBYOKKeyValue}
+                              onChange={(e) => setWindsurfBYOKKeyValue(e.target.value)}
+                              placeholder={`Enter your ${windsurfBYOKProviderValue.charAt(0).toUpperCase() + windsurfBYOKProviderValue.slice(1)} API key`}
+                              className="w-full px-4 py-2.5 bg-white/5 border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                          <p className="text-xs text-blue-300 leading-relaxed">
+                            <strong>BYOK Mode:</strong> Requests will be sent directly to {windsurfBYOKProviderValue} using your API key.
+                            No Windsurf credits will be consumed. You'll be billed according to your provider's pricing.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-muted mb-2">
@@ -1204,8 +1396,15 @@ export default function Settings() {
                           case 'groq': setGroqApiKey(key); break;
                           case 'gemini': setGeminiApiKey(key); break;
                           case 'moonshot': setMoonshotApiKey(key); break;
-                          case 'openai': setOpenaiKey(key); break;
-                          case 'anthropic': setAnthropicKey(key); break;
+                          case 'openai': setOpenaiApiKey(key); break;
+                          case 'anthropic': setAnthropicApiKey(key); break;
+                          case 'windsurf': 
+                            setWindsurfApiKey(windsurfKey);
+                            setWindsurfServiceKey(windsurfServiceKeyValue);
+                            setWindsurfBYOKApiKey(windsurfBYOKKeyValue);
+                            setWindsurfBYOKProvider(windsurfBYOKProviderValue as any);
+                            setWindsurfUseBYOK(windsurfUseBYOKValue);
+                            break;
                         }
                       }
                       
@@ -1221,7 +1420,7 @@ export default function Settings() {
                         if (defaultModel) setAIBackendModel(defaultModel);
                       }
                     }}
-                    disabled={!getProviderKey()}
+                    disabled={!getProviderKey() && activeTab !== 'windsurf'}
                     className={`w-full py-2.5 rounded-lg text-sm font-medium transition-all ${
                       aiProvider === activeTab 
                         ? 'bg-accent text-white shadow-lg shadow-accent/20' 

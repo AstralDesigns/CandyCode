@@ -113,8 +113,8 @@ interface Store {
   validateLicense: () => Promise<boolean>;
 
   // AI Provider Settings
-  aiProvider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic';
-  setAIProvider: (provider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic') => void;
+  aiProvider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic' | 'windsurf';
+  setAIProvider: (provider: 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic' | 'windsurf') => void;
   
   // Provider-specific API keys
   geminiApiKey: string;
@@ -131,6 +131,16 @@ interface Store {
   setOpenaiApiKey: (key: string) => void;
   anthropicApiKey: string;
   setAnthropicApiKey: (key: string) => void;
+  windsurfApiKey: string;
+  setWindsurfApiKey: (key: string) => void;
+  windsurfServiceKey: string;
+  setWindsurfServiceKey: (key: string) => void;
+  windsurfBYOKProvider: 'openai' | 'anthropic' | 'google' | null;
+  setWindsurfBYOKProvider: (provider: 'openai' | 'anthropic' | 'google' | null) => void;
+  windsurfBYOKApiKey: string;
+  setWindsurfBYOKApiKey: (key: string) => void;
+  windsurfUseBYOK: boolean;
+  setWindsurfUseBYOK: (useBYOK: boolean) => void;
   
   // AI Backend Model
   aiBackendModel: string;
@@ -353,7 +363,7 @@ export const useStore = create<Store>()((set, get) => ({
   },
   
   // AI Provider Settings
-  aiProvider: 'gemini',
+  aiProvider: 'windsurf',
   setAIProvider: (provider) => set((state) => {
     let newModel = 'gemini-2.5-flash';
     
@@ -363,6 +373,8 @@ export const useStore = create<Store>()((set, get) => ({
       newModel = 'gpt-4o';
     } else if (provider === 'anthropic') {
       newModel = 'claude-3-5-sonnet-20240620';
+    } else if (provider === 'windsurf') {
+      newModel = 'swe-1.5';
     } else {
       newModel = state.availableModels.find(m => m.provider === provider && (m as any).recommended)?.id ||
                  state.availableModels.find(m => m.provider === provider)?.id ||
@@ -387,9 +399,19 @@ export const useStore = create<Store>()((set, get) => ({
   setOpenaiApiKey: (key) => set({ openaiApiKey: key }),
   anthropicApiKey: '',
   setAnthropicApiKey: (key) => set({ anthropicApiKey: key }),
+  windsurfApiKey: '',
+  setWindsurfApiKey: (key) => set({ windsurfApiKey: key }),
+  windsurfServiceKey: '',
+  setWindsurfServiceKey: (key) => set({ windsurfServiceKey: key }),
+  windsurfBYOKProvider: null,
+  setWindsurfBYOKProvider: (provider) => set({ windsurfBYOKProvider: provider }),
+  windsurfBYOKApiKey: '',
+  setWindsurfBYOKApiKey: (key) => set({ windsurfBYOKApiKey: key }),
+  windsurfUseBYOK: false,
+  setWindsurfUseBYOK: (useBYOK) => set({ windsurfUseBYOK: useBYOK }),
   
   // AI Backend Model
-  aiBackendModel: 'gemini-2.5-flash',
+  aiBackendModel: 'swe-1.5',
   setAIBackendModel: (model) => set({ aiBackendModel: model }),
   
   // Available Models
@@ -425,6 +447,10 @@ export const useStore = create<Store>()((set, get) => ({
     { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', desc: 'Highest level of intelligence and capability', limits: 'Requires Anthropic API Key' },
     { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', desc: 'Powerful model for highly complex tasks', limits: 'Requires Anthropic API Key' },
     { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', desc: 'Fastest and most compact model', limits: 'Requires Anthropic API Key' },
+  ],
+  windsurfModels: [
+    { id: 'swe-1.5', name: 'SWE-1.5 (Fast Agent)', desc: 'Advanced agent model with superior reasoning', limits: 'Credit-based or BYOK' },
+    { id: 'swe-1-lite', name: 'SWE-1 Lite', desc: 'Lightweight agent model for quick tasks', limits: 'Zero-credit model' },
   ],
   
   // Tasks
@@ -1015,6 +1041,11 @@ if (typeof window !== 'undefined') {
         moonshotApiKey: parsed.moonshotApiKey || '',
         openaiApiKey: parsed.openaiApiKey || '',
         anthropicApiKey: parsed.anthropicApiKey || '',
+        windsurfApiKey: parsed.windsurfApiKey || '',
+        windsurfServiceKey: parsed.windsurfServiceKey || '',
+        windsurfBYOKProvider: parsed.windsurfBYOKProvider || null,
+        windsurfBYOKApiKey: parsed.windsurfBYOKApiKey || '',
+        windsurfUseBYOK: parsed.windsurfUseBYOK || false,
         aiBackendModel: model,
         terminalSettings: parsed.terminalSettings || {
           fontSize: 13,
@@ -1051,6 +1082,11 @@ if (typeof window !== 'undefined') {
         moonshotApiKey: state.moonshotApiKey,
         openaiApiKey: state.openaiApiKey,
         anthropicApiKey: state.anthropicApiKey,
+        windsurfApiKey: state.windsurfApiKey,
+        windsurfServiceKey: state.windsurfServiceKey,
+        windsurfBYOKProvider: state.windsurfBYOKProvider,
+        windsurfBYOKApiKey: state.windsurfBYOKApiKey,
+        windsurfUseBYOK: state.windsurfUseBYOK,
         ollamaModels: state.ollamaModels,
         aiBackendModel: state.aiBackendModel,
         terminalSettings: state.terminalSettings,

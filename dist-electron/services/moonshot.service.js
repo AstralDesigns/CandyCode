@@ -15,12 +15,14 @@ exports.MoonshotService = void 0;
  */
 const electron_1 = require("electron");
 const url_1 = require("url");
+const buffer_1 = require("buffer");
 // Detect if we're running in Node.js (test) or Electron (app)
 const isElectron = typeof process !== 'undefined' && process.versions && process.versions.electron;
 const tool_definitions_1 = require("./tool-definitions");
 const file_operations_service_1 = require("./file-operations.service");
 const smart_context_service_1 = require("./smart-context.service");
-const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
+const agentic_loop_service_1 = require("./agentic-loop.service");
+const SYSTEM_INSTRUCTION = `You are Candy, a friendly and autonomous coding assistant for CandyCode.
 
 AGENTIC BEHAVIOR:
 - Use function calls to execute actions - call functions directly, don't describe them
@@ -78,7 +80,10 @@ class MoonshotService {
     onChunkCallback = undefined;
     baseUrl = 'https://api.moonshot.cn/v1/';
     taskCompleted = false;
-    constructor() { }
+    loopManager;
+    constructor() {
+        this.loopManager = new agentic_loop_service_1.AgenticLoopManager(30);
+    }
     setMainWindow(window) {
         this.mainWindow = window;
     }
@@ -197,8 +202,8 @@ class MoonshotService {
                         ok: statusCode >= 200 && statusCode < 300,
                         headers,
                         body: stream,
-                        text: async () => Buffer.concat(chunks).toString(),
-                        json: async () => JSON.parse(Buffer.concat(chunks).toString()),
+                        text: async () => buffer_1.Buffer.concat(chunks).toString(),
+                        json: async () => JSON.parse(buffer_1.Buffer.concat(chunks).toString()),
                     };
                     resolve(netResponse);
                 });
@@ -266,6 +271,7 @@ class MoonshotService {
             console.log(`[MoonshotService] Function ${functionName} result:`, result);
             if (functionName === 'task_complete') {
                 this.taskCompleted = true;
+                this.loopManager.markTaskCompleted();
             }
             return { name: functionName, response: result };
         }
@@ -277,6 +283,12 @@ class MoonshotService {
     async chatStream(prompt, options, onChunk) {
         this.onChunkCallback = onChunk;
         this.taskCompleted = false;
+        // LICENSE CHECK: Set limits based on License Tier
+        const tier = options.licenseTier || (options.isPro ? 'pro' : 'free');
+        const MAX_LOOPS = tier === 'free' ? 50 : (tier === 'pro' ? Infinity : 50);
+        // Update loop manager with the new limit
+        this.loopManager = new agentic_loop_service_1.AgenticLoopManager(isFinite(MAX_LOOPS) ? MAX_LOOPS : 1000);
+        this.loopManager.setIsActive(true);
         // CRITICAL: Fresh AbortController for each request
         // This fixes the singleton state issue where previous cancelled requests affect new ones
         this.cancelController = new AbortController();
@@ -310,7 +322,15 @@ class MoonshotService {
         // BUILD SMART CONTEXT IF PROJECT IS ACTIVE
         if (options.context?.project) {
             const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
-            const selectedContextMode = options.context.contextMode || 'smart';
+            // LICENSE CHECK: Force minimal context if not Pro
+            let selectedContextMode = options.context.contextMode || 'smart';
+            if (tier !== 'pro' && selectedContextMode !== 'minimal') {
+                selectedContextMode = 'minimal';
+                this.sendChunk({
+                    type: 'text',
+                    data: '> **Free Tier Notice:** Project Context restricted to "Minimal" mode. Upgrade to Pro for Smart/Full context awareness.\n\n'
+                });
+            }
             if (isStartOfSession || selectedContextMode === 'full') {
                 console.log(`[MoonshotService] Building project context with mode: ${selectedContextMode}`);
                 const smartContext = new smart_context_service_1.SmartContext(options.context.project, selectedContextMode);
@@ -329,18 +349,16 @@ class MoonshotService {
             contextText += '\n\n';
         }
         messages.push({ role: 'user', content: contextText + prompt });
-        const maxIterations = 30;
-        let iteration = 0;
         try {
-            while (iteration < maxIterations && !this.taskCompleted) {
+            while (this.loopManager.shouldContinueLoop()) {
                 if (this.cancelController?.signal.aborted) {
                     console.log('[MoonshotService] Request aborted');
                     this.sendChunk({ type: 'done' });
                     clearTimeout(timeoutId);
                     return;
                 }
-                iteration++;
-                console.log(`[MoonshotService] Iteration ${iteration}/${maxIterations}`);
+                this.loopManager.incrementIteration();
+                console.log(`[MoonshotService] Iteration ${this.loopManager.getCurrentIteration()}/${MAX_LOOPS}`);
                 const requestBody = {
                     model,
                     messages,
@@ -546,16 +564,19 @@ class MoonshotService {
                 else if (fullText && !this.taskCompleted) {
                     // Got text response but no tool calls - prompt to continue
                     messages.push({ role: 'assistant', content: fullText });
-                    messages.push({
-                        role: 'user',
-                        content: 'Continue with the task. Use the available tools to make progress. If done, call task_complete.'
-                    });
                 }
                 else if (!fullText && !processedToolCallsThisIteration) {
                     // No progress at all - break to avoid infinite loop
                     console.log('[MoonshotService] No progress made, ending loop');
                     break;
                 }
+            }
+            // If we exit the loop without completion, notify the user about the limit
+            if (!this.loopManager.getTaskCompleted() && tier !== 'pro' && this.loopManager.getCurrentIteration() >= MAX_LOOPS) {
+                this.sendChunk({
+                    type: 'text',
+                    data: `\n\n**License Limit Reached:** The autonomous agent has stopped after ${MAX_LOOPS} iterations. Upgrade to Pro for extended autonomous coding.`
+                });
             }
             console.log('[MoonshotService] Completed successfully');
             this.sendChunk({ type: 'done' });
@@ -578,6 +599,7 @@ class MoonshotService {
         if (this.cancelController) {
             this.cancelController.abort();
         }
+        this.loopManager.setIsActive(false);
         this.onChunkCallback = undefined;
         this.sendChunk({ type: 'done' });
     }

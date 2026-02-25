@@ -1,10 +1,10 @@
-# Refactoring AlphaStudio for Production Gemini Access (Subscription Model)
+# Refactoring CandyCode for Production Gemini Access (Subscription Model)
 
-This document outlines the necessary refactoring steps to transition AlphaStudio's Gemini model access from a direct API key implementation to a server-side proxy model, enabling a subscription-based usage where users pay AlphaStudio directly, and AlphaStudio manages the Gemini API costs.
+This document outlines the necessary refactoring steps to transition CandyCode's Gemini model access from a direct API key implementation to a server-side proxy model, enabling a subscription-based usage where users pay CandyCode directly, and CandyCode manages the Gemini API costs.
 
 ## Current State: Direct API Key Implementation
 
-Currently, AlphaStudio relies on users providing their individual Gemini API keys. This model is suitable for development and personal use but presents several challenges for a production application with a subscription model:
+Currently, CandyCode relies on users providing their individual Gemini API keys. This model is suitable for development and personal use but presents several challenges for a production application with a subscription model:
 *   **Security Risk**: User API keys are stored and used client-side, making them vulnerable to exposure.
 *   **Billing Complexity**: Each user is responsible for their own Gemini usage, preventing a unified billing model.
 *   **Rate Limiting**: Client-side rate limiting is harder to manage globally across all users.
@@ -12,11 +12,11 @@ Currently, AlphaStudio relies on users providing their individual Gemini API key
 
 ## Proposed Architecture: Backend Proxy for Gemini Access
 
-The refactored architecture will introduce a dedicated backend service that acts as a secure proxy between the AlphaStudio client (Electron app) and the Gemini API.
+The refactored architecture will introduce a dedicated backend service that acts as a secure proxy between the CandyCode client (Electron app) and the Gemini API.
 
 ```
 +----------------+       +-------------------+       +-----------------+       +--------------+
-| AlphaStudio    |       | Your Backend      |       | Google Cloud    |       | Gemini API   |
+| CandyCode      |       | Your Backend      |       | Google Cloud    |       | Gemini API   |
 | (Electron App) | <---> | (API Proxy)       | <---> | (Authentication)| <---> | (Generative  |
 | - Frontend     |       | - User Auth       |       |                 |       |   AI Models) |
 | - IPC Renderer |       | - Gemini API Key  |       |                 |       |              |
@@ -32,16 +32,16 @@ The refactored architecture will introduce a dedicated backend service that acts
 
 ### Key Components:
 
-1.  **AlphaStudio Client (Frontend & Electron Main Process)**:
+1.  **CandyCode Client (Frontend & Electron Main Process)**:
     *   No longer handles Gemini API keys directly.
     *   Makes requests to the new backend API proxy instead of `window.electronAPI.aiBackendService` for Gemini calls.
     *   Handles user authentication with your backend.
     *   Displays usage information provided by your backend.
 
 2.  **Your Backend (API Proxy Service)**:
-    *   **User Authentication & Authorization**: Securely authenticates AlphaStudio users and authorizes their access to Gemini models based on their subscription status.
+    *   **User Authentication & Authorization**: Securely authenticates CandyCode users and authorizes their access to Gemini models based on their subscription status.
     *   **Gemini API Key Management**: Stores and uses your *own* Gemini API key(s) securely. This key is never exposed to the client. Consider using Google Cloud's Secret Manager for storing the API key.
-    *   **Request Proxying**: Receives requests from the AlphaStudio client, forwards them to the Gemini API, and returns the responses.
+    *   **Request Proxying**: Receives requests from the CandyCode client, forwards them to the Gemini API, and returns the responses.
     *   **Rate Limiting**: Implements centralized rate limiting to manage your overall Gemini usage and prevent abuse. For example, you might allow 100 requests per minute for a basic tier and 1000 for a premium tier.
     *   **Usage Tracking**: Tracks individual user usage of Gemini models (e.g., input/output token counts, number of API calls) for billing purposes.
     *   **Billing Integration**: Interfaces with your chosen billing system (e.g., Stripe, Paddle, Chargebee) to charge users based on their consumption or subscription tier.
@@ -133,7 +133,7 @@ This is the most significant new piece of infrastructure.
 
 ### 1.1. Focus on Vertex AI Approach for Gemini Access
 
-While direct Gemini API access is an option, leveraging Google Cloud's Vertex AI platform provides significant advantages for production deployments, especially for enterprise-grade applications like AlphaStudio.
+While direct Gemini API access is an option, leveraging Google Cloud's Vertex AI platform provides significant advantages for production deployments, especially for enterprise-grade applications like CandyCode.
 
 **What is Vertex AI?**
 Vertex AI is Google Cloud's unified machine learning platform that allows you to build, deploy, and scale ML models. It provides a comprehensive set of tools for the entire ML lifecycle, including data preparation, model training, deployment, and monitoring. For Generative AI, Vertex AI offers managed access to Google's foundation models, including Gemini.
@@ -142,10 +142,10 @@ Vertex AI is Google Cloud's unified machine learning platform that allows you to
 
 *   **Enhanced Security and Compliance**: Vertex AI integrates seamlessly with Google Cloud's identity and access management (IAM), audit logging, and compliance certifications, providing a more secure and auditable environment for sensitive AI workloads.
 *   **Managed Infrastructure**: Vertex AI handles the underlying infrastructure for serving Gemini models, reducing operational overhead and ensuring high availability and scalability without requiring you to manage servers.
-*   **Unified ML Platform**: If AlphaStudio ever expands to include custom ML models or other Google Cloud ML services, Vertex AI provides a single platform for managing all ML assets.
+*   **Unified ML Platform**: If CandyCode ever expands to include custom ML models or other Google Cloud ML services, Vertex AI provides a single platform for managing all ML assets.
 *   **Fine-tuning and Customization**: Vertex AI offers capabilities to fine-tune Gemini models with your own data, allowing for more domain-specific and accurate responses. This is crucial for tailoring AI to specific user needs.
 *   **Monitoring and Explainability**: Advanced monitoring tools within Vertex AI allow you to track model performance, detect drift, and gain insights into model predictions. Explainable AI features can help understand why a model made a particular decision.
-*   **Cost Management and Optimization**: Vertex AI provides detailed cost breakdowns and tools to optimize spending on AI inference, helping AlphaStudio manage its operational costs more effectively.
+*   **Cost Management and Optimization**: Vertex AI provides detailed cost breakdowns and tools to optimize spending on AI inference, helping CandyCode manage its operational costs more effectively.
 *   **Private Endpoints**: For enhanced security and reduced latency, you can configure private endpoints to access Gemini models within your Virtual Private Cloud (VPC) network, ensuring that traffic does not traverse the public internet.
 
 **Integration with Your Backend Proxy:**
@@ -222,9 +222,9 @@ async def chat_with_gemini(request: ChatRequest, user: dict = Depends(get_curren
         raise HTTPException(status_code=500, detail=f"Failed to get response from Gemini via Vertex AI: {str(e)}")
 ```
 
-By adopting the Vertex AI approach, AlphaStudio can build a more robust, secure, and scalable foundation for its Gemini-powered features, aligning with best practices for enterprise-grade AI applications on Google Cloud.
+By adopting the Vertex AI approach, CandyCode can build a more robust, secure, and scalable foundation for its Gemini-powered features, aligning with best practices for enterprise-grade AI applications on Google Cloud.
 
-### 2. AlphaStudio Client Modifications (`src/`, `electron/`)
+### 2. CandyCode Client Modifications (`src/`, `electron/`)
 
 #### 2.1. Frontend (`src/`)
 
@@ -233,7 +233,7 @@ By adopting the Vertex AI approach, AlphaStudio can build a more robust, secure,
     *   **`src/components/Settings.tsx`**: Remove the UI elements for `geminiApiKey`.
     *   **`src/services/ai-backend-api.service.ts`**: Remove the `apiKey` parameter from the `chatStream` method and any direct usage of `geminiApiKey`.
 *   **Update `ai-backend-api.service.ts`**:
-    *   Modify `src/services/ai-backend-api.service.ts` to use `fetch` or a dedicated HTTP client (e.g., `axios`) to send requests to your new backend proxy URL (e.g., `https://api.alphastudio.com/api/gemini/chat`).
+    *   Modify `src/services/ai-backend-api.service.ts` to use `fetch` or a dedicated HTTP client (e.g., `axios`) to send requests to your new backend proxy URL (e.g., `https://api.candycode.com/api/gemini/chat`).
     *   **Authentication Header**: Include the user's authentication token (e.g., JWT) in the `Authorization` header of all requests to your backend.
     *   **Example (Simplified `chatStream` in `ai-backend-api.service.ts`)**:
         ```typescript
@@ -303,12 +303,12 @@ By adopting the Vertex AI approach, AlphaStudio can build a more robust, secure,
 
 *   **Centralized Control**: Full control over Gemini API usage, costs, and features.
 *   **Enhanced Security**: Your Gemini API key is never exposed to users, significantly reducing security risks.
-*   **Flexible Billing**: Implement various subscription tiers, usage-based billing, or free trial models, directly managed by AlphaStudio.
+*   **Flexible Billing**: Implement various subscription tiers, usage-based billing, or free trial models, directly managed by CandyCode.
 *   **Scalability**: Your backend can be scaled independently to handle increased user demand without impacting client-side performance.
 *   **New Features**: Enables development of server-side features like custom model fine-tuning, advanced analytics on user interactions, personalized AI experiences, and more complex integrations with other services.
 *   **Auditing and Reporting**: Easier to audit and report on overall Gemini usage and costs.
 
-This refactoring represents a significant architectural shift but is essential for transforming AlphaStudio into a robust, secure, and commercially viable product.
+This refactoring represents a significant architectural shift but is essential for transforming CandyCode into a robust, secure, and commercially viable product.
 
 
 ## Future Enhancements

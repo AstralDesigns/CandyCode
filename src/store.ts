@@ -185,6 +185,7 @@ interface Store {
   clearContext: () => void;
   projectContext: string | null;
   setProjectContext: (path: string | null) => void;
+  reloadLastProject: () => Promise<void>;
   contextMode: 'full' | 'smart' | 'minimal';
   setContextMode: (mode: 'full' | 'smart' | 'minimal') => void;
   isBuildingContext: boolean;
@@ -283,7 +284,7 @@ export const useStore = create<Store>()((set, get) => ({
   // Settings
   showSettings: false,
   setShowSettings: (show) => set({ showSettings: show }),
-  activeSettingsTab: 'themes',
+  activeSettingsTab: 'license',
   setActiveSettingsTab: (tab) => set({ activeSettingsTab: tab }),
 
   // Terminal Settings
@@ -329,33 +330,24 @@ export const useStore = create<Store>()((set, get) => ({
     // Validate Tier Prefix
     let tier: LicenseTier = 'free';
     if (prefix === 'ALPHA-PRO') tier = 'pro';
-    else if (prefix === 'ALPHA-STD') tier = 'standard';
     else {
       set({ licenseTier: 'free' });
       return false;
     }
     
     // Validate Checksum (Simple hash check to prevent random strings)
-    // In a real app, this would verify against a backend or use public-key crypto
-    // Here we use a simple SHA256 slice to verify integrity matching generator.ts
     try {
-        // Use standard Web Crypto API which is available in modern browsers and Node via polyfills or global
-        // Since we are in Renderer process, window.crypto.subtle is available
         const msgBuffer = new TextEncoder().encode(randomPart);
         const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
         
-        // Check if last 4 chars match
         if (hashHex.substring(0, 4) === checksum) {
              set({ licenseTier: tier });
              return true;
         }
     } catch (e) {
         console.error("License validation error:", e);
-        // Fallback for environments without crypto.subtle (shouldn't happen in Electron)
-        // Or if we just want to allow the "simple" check for development convenience:
-        // if (randomPart.length === 16 && checksum.length === 4) ...
     }
 
     set({ licenseTier: 'free' });
@@ -526,6 +518,19 @@ export const useStore = create<Store>()((set, get) => ({
   clearContext: () => set({ contextFiles: [], contextImages: [] }),
   projectContext: null,
   setProjectContext: (path) => set({ projectContext: path }),
+  reloadLastProject: async () => {
+    // Get the last opened project from main process
+    if (window.electronAPI?.project?.getCurrent) {
+      const lastProjectPath = await window.electronAPI.project.getCurrent();
+      if (lastProjectPath && lastProjectPath !== useStore.getState().projectContext) {
+        console.log('[Store] Reloading last project:', lastProjectPath);
+        // Notify via IPC to trigger the project load
+        if (window.electronAPI?.project?.setCurrent) {
+          await window.electronAPI.project.setCurrent(lastProjectPath);
+        }
+      }
+    }
+  },
   contextMode: 'minimal' as 'full' | 'smart' | 'minimal',
   setContextMode: (mode) => set({ contextMode: mode }),
   isBuildingContext: false,
@@ -847,7 +852,6 @@ export const useStore = create<Store>()((set, get) => ({
     const pane = store.panes.find((p) => p.id === id);
     if (!pane || !pane.isUnsaved) return false;
     
-    // If it's a real file path (not untitled), just save it
     if (!id.startsWith('untitled-')) {
       if (window.electronAPI?.writeFile) {
         try {
@@ -866,7 +870,6 @@ export const useStore = create<Store>()((set, get) => ({
       }
     }
     
-    // Otherwise show save dialog
     if (!window.electronAPI?.showSaveDialog) {
       console.error('Save dialog not available');
       return false;
@@ -934,13 +937,19 @@ export const useStore = create<Store>()((set, get) => ({
   refreshOpenFiles: async () => {
     const store = useStore.getState();
     const openFiles = store.panes.filter(p => (p.type === 'code' || p.type === 'markdown') && !p.id.startsWith('untitled-'));
-    
+
     if (openFiles.length === 0 || !window.electronAPI?.readFile) return;
-    
+
     const updatedPanes = [...store.panes];
     let changed = false;
-    
+
     for (const pane of openFiles) {
+      // IMPORTANT: Skip files with unsaved changes to avoid overwriting user's work
+      if (pane.isUnsaved) {
+        console.log(`[Store] Skipping refresh of ${pane.id} - has unsaved changes`);
+        continue;
+      }
+
       try {
         const result = await window.electronAPI.readFile(pane.id);
         if (!('error' in result) && result.content !== undefined) {
@@ -956,7 +965,7 @@ export const useStore = create<Store>()((set, get) => ({
         console.error(`Failed to refresh file ${pane.id}:`, error);
       }
     }
-    
+
     if (changed) {
       set({ panes: updatedPanes });
     }
@@ -964,26 +973,30 @@ export const useStore = create<Store>()((set, get) => ({
 }));
 
 if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('alphastudio-storage');
+  console.log('[Store] Initializing from localStorage...');
+  const stored = localStorage.getItem('candycode-storage');
+  
   if (stored) {
+    console.log('[Store] Found stored state, length:', stored.length);
     try {
       const parsed = JSON.parse(stored);
-      
+      console.log('[Store] Parsed state successfully');
+
       const validGeminiModels = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'];
       const validGrokModels = ['grok-4.1-fast', 'grok-4.1', 'grok-beta'];
       const validGroqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'moonshotai/kimi-k2-instruct'];
       const validMoonshotModels = ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'];
       const validOpenAIModels = ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'];
       const validAnthropicModels = ['claude-3-5-sonnet-20240620', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'];
-      
+
       let model = parsed.aiBackendModel || 'gemini-2.5-flash';
       let provider = parsed.aiProvider || 'gemini';
-      
+
       if (provider === 'deepseek') {
         provider = 'gemini';
         model = 'gemini-2.5-flash';
       }
-      
+
       const oldModelMap: Record<string, { provider: string, model: string }> = {
         'llama3.1': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
         'llama3.1:8b': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
@@ -998,7 +1011,7 @@ if (typeof window !== 'undefined') {
         'llama-3.2-90b-vision-preview': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
         'gemini-2.5-flash': { provider: 'gemini', model: 'gemini-2.5-flash' },
       };
-      
+
       if (oldModelMap[model]) {
         provider = oldModelMap[model].provider;
         model = oldModelMap[model].model;
@@ -1018,14 +1031,19 @@ if (typeof window !== 'undefined') {
           model = 'claude-3-5-sonnet-20240620';
         }
       }
-      
-      // Determine correct license tier from old isPro
+
       let tier: LicenseTier = 'free';
       if (parsed.isPro) tier = 'pro';
-      // If we have a license key but tier is default/free, try to upgrade
       const storedKey = parsed.licenseKey || '';
-      if (storedKey.trim().toUpperCase().startsWith('ALPHA-STD-')) tier = 'standard';
-      else if (storedKey.trim().toUpperCase().startsWith('ALPHA-PRO-')) tier = 'pro';
+      if (storedKey.trim().toUpperCase().startsWith('ALPHA-PRO-')) tier = 'pro';
+
+      console.log('[Store] Setting state from localStorage:', {
+        theme: parsed.theme,
+        aiProvider: provider,
+        aiBackendModel: model,
+        panes: parsed.panes?.length || 0,
+        activePaneId: parsed.activePaneId,
+      });
 
       useStore.setState({
         theme: parsed.theme === 'aether' ? 'alpha' : (parsed.theme || 'alpha'),
@@ -1060,11 +1078,19 @@ if (typeof window !== 'undefined') {
         messages: parsed.messages || [],
         sidebarWidth: parsed.sidebarWidth || 256,
         chatWidth: parsed.chatWidth || 384,
-        activeSettingsTab: parsed.activeSettingsTab || 'themes',
+        activeSettingsTab: parsed.activeSettingsTab || 'license',
+        panes: parsed.panes || [],
+        activePaneId: parsed.activePaneId || null,
+        activePlan: parsed.activePlan || null,
+        projectContext: parsed.projectContext || null,
       });
+      console.log('[Store] State loaded successfully from localStorage');
     } catch (e) {
-      console.error('Failed to parse stored state:', e);
+      console.error('[Store] Failed to parse stored state:', e);
+      console.error('[Store] Stored data:', stored?.substring(0, 200) + '...');
     }
+  } else {
+    console.log('[Store] No stored state found in localStorage');
   }
 
   useStore.subscribe((state) => {
@@ -1091,7 +1117,7 @@ if (typeof window !== 'undefined') {
         aiBackendModel: state.aiBackendModel,
         terminalSettings: state.terminalSettings,
         licenseKey: state.licenseKey,
-        isPro: state.licenseTier === 'pro', // Backward compatibility
+        isPro: state.licenseTier === 'pro',
         tasks: state.tasks,
         messages: state.messages.map(msg => ({
           id: msg.id,
@@ -1115,8 +1141,12 @@ if (typeof window !== 'undefined') {
         sidebarWidth: state.sidebarWidth,
         chatWidth: state.chatWidth,
         activeSettingsTab: state.activeSettingsTab,
+        panes: state.panes,
+        activePaneId: state.activePaneId,
+        activePlan: state.activePlan,
+        projectContext: state.projectContext,
       };
-      localStorage.setItem('alphastudio-storage', JSON.stringify(serializableState));
+      localStorage.setItem('candycode-storage', JSON.stringify(serializableState));
     } catch (e) {
       console.error('Failed to save state to localStorage:', e);
     }

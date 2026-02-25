@@ -8,6 +8,7 @@ import { Ollama, Message } from 'ollama';
 import nodeFetch from 'node-fetch';
 import { Buffer } from 'buffer';
 import { TOOL_DEFINITIONS } from './tool-definitions';
+import { SmartContext } from './smart-context.service';
 import {
   readFile,
   writeFile,
@@ -80,43 +81,22 @@ export interface OllamaChunkData {
   name?: string;
 }
 
-/**
- * Convert Gemini-style tool definitions to Ollama tools format
- */
-function convertToOllamaTools(geminiTools: any[]): any[] {
-  const tools: any[] = [];
-  for (const toolGroup of geminiTools) {
-    const decls = toolGroup.functionDeclarations || [];
-    for (const declaration of decls) {
-      tools.push({
-        type: 'function',
-        function: {
-          name: declaration.name,
-          description: declaration.description || '',
-          parameters: declaration.parameters || { type: 'object', properties: {}, required: [] }
-        }
-      });
-    }
-  }
-  return tools;
-}
-
 export class OllamaService {
   private mainWindow: BrowserWindow | null = null;
   // Official Ollama client with node-fetch shim for Electron/Node environments
-  private ollama = new Ollama({ 
-    host: 'http://localhost:11434',
+  private ollama = new Ollama({
+    host: 'http://127.0.0.1:11434',
     fetch: async (input: any, init: any) => {
-      const response = await nodeFetch(input, { 
-        ...init, 
-        timeout: 300000 
+      const response = await nodeFetch as any; (input, {
+        ...init,
+        timeout: 300000
       });
-      
+
       // Node-fetch response.body is a Node Stream, but Ollama/Browser-fetch expects a Web ReadableStream
       // We add getReader() to the body to satisfy the browser-style library expectation
       if (response.body && typeof (response.body as any).getReader !== 'function') {
         const body = response.body as any;
-        body.getReader = function(this: any) {
+        body.getReader = function (this: any) {
           const iterable = this;
           const iterator = iterable[Symbol.asyncIterator]();
           return {
@@ -128,36 +108,36 @@ export class OllamaService {
               }
               return result;
             },
-            releaseLock: () => {},
+            releaseLock: () => { },
             cancel: async () => {
               if (typeof iterable.destroy === 'function') iterable.destroy();
             }
           };
         }.bind(body);
       }
-      
+
       // Patch response.clone() which is used by some fetch-based libraries
       const originalClone = response.clone.bind(response);
-      response.clone = function() {
+      response.clone = function () {
         const cloned = originalClone();
         if (cloned.body && typeof cloned.body.getReader !== 'function') {
           const cBody = cloned.body;
           const cIterator = cBody[Symbol.asyncIterator]();
-          cBody.getReader = function() {
+          cBody.getReader = function () {
             return {
               read: async () => {
                 const res = await cIterator.next();
                 if (res.value && Buffer.isBuffer(res.value)) res.value = new Uint8Array(res.value);
                 return res;
               },
-              releaseLock: () => {},
+              releaseLock: () => { },
               cancel: async () => { if (typeof cBody.destroy === 'function') cBody.destroy(); }
             };
           }.bind(cBody);
         }
         return cloned;
       }.bind(response);
-      
+
       return response as any;
     }
   });
@@ -167,7 +147,7 @@ export class OllamaService {
   private abortController: AbortController | null = null;
   private modelCapabilities: Map<string, { supportsTools: boolean }> = new Map();
 
-  constructor() {}
+  constructor() { }
 
   setMainWindow(window: BrowserWindow) {
     this.mainWindow = window;
@@ -217,14 +197,14 @@ export class OllamaService {
 
     try {
       console.log(`[OllamaService] Executing ${functionName} with args:`, args);
-      
+
       let result;
       if (functionName === 'write_file' && this.mainWindow) {
         result = await func(args, this.mainWindow);
       } else {
         result = await func(args);
       }
-      
+
       console.log(`[OllamaService] Function ${functionName} result:`, result);
 
       if (functionName === 'task_complete') {
@@ -277,7 +257,7 @@ export class OllamaService {
     try {
       console.log(`[OllamaService] Pulling model: ${modelName}`);
       const stream = await this.ollama.pull({ model: modelName, stream: true });
-      
+
       for await (const part of stream) {
         if (part.status && onProgress) {
           let progress = part.status;
@@ -315,7 +295,7 @@ export class OllamaService {
   async runModel(modelName: string): Promise<{ success: boolean; error?: string }> {
     try {
       console.log(`[OllamaService] Loading model into memory: ${modelName}`);
-      
+
       await this.ollama.generate({
         model: modelName,
         prompt: '',
@@ -347,7 +327,7 @@ export class OllamaService {
         { name: 'codellama', description: 'Code Llama - Optimized for coding' },
       ];
 
-      const filtered = popularModels.filter(m => 
+      const filtered = popularModels.filter(m =>
         m.name.toLowerCase().includes(query.toLowerCase()) ||
         (m.description && m.description.toLowerCase().includes(query.toLowerCase()))
       );
@@ -380,7 +360,7 @@ export class OllamaService {
     this.taskCompleted = false;
 
     const model = options.model || 'llama3.2';
-    
+
     if (this.activeModelName !== model) {
       console.log(`[OllamaService] Model ${model} not active, loading it...`);
       await this.runModel(model);
@@ -402,7 +382,34 @@ export class OllamaService {
       }
     }
 
+    // Build context: SmartContext for the project directory + any explicitly selected files
     let contextStr = '';
+
+    if (options.context?.project) {
+      const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
+      const contextMode = options.context.contextMode || 'smart';
+
+      if (isStartOfSession || contextMode === 'full') {
+        console.log(`[OllamaService] Building SmartContext for: ${options.context.project} (mode: ${contextMode})`);
+        try {
+          // Wrap in a timeout so a slow/hanging SmartContext doesn't block the response
+          const smartContext = new SmartContext(options.context.project, contextMode);
+          const buildPromise = smartContext.buildContext();
+          const timeoutPromise = new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error('SmartContext timeout after 15s')), 15000)
+          );
+          const projectSummary = await Promise.race([buildPromise, timeoutPromise]);
+          contextStr += projectSummary + '\n\n';
+          console.log(`[OllamaService] SmartContext built (${projectSummary.length} chars)`);
+        } catch (err: any) {
+          console.error('[OllamaService] SmartContext failed, falling back to path only:', err.message);
+          contextStr += `Active Project: ${options.context.project}\n\n`;
+        }
+      } else {
+        contextStr += `Active Project: ${options.context.project}\nUse tools (list_files, read_file, search_code) to explore the codebase as needed.\n\n`;
+      }
+    }
+
     if (options.context?.files && options.context.files.length > 0) {
       contextStr += '## Project Files:\n';
       for (const file of options.context.files) {
@@ -417,17 +424,17 @@ export class OllamaService {
     messages.push({ role: 'user', content: userContent });
 
     try {
-      const tools = convertToOllamaTools(TOOL_DEFINITIONS);
+      const flatTools = TOOL_DEFINITIONS[0].functionDeclarations;
 
       console.log(`[OllamaService] Starting chat stream with model: ${model} (Native tools: ${useNativeTools})`);
-      
+
       let response;
       try {
         response = await this.ollama.chat({
           model,
           messages,
           stream: true,
-          tools: (useNativeTools && tools.length > 0) ? tools : undefined,
+          tools: flatTools as any,
           options: {
             temperature: 0.7,
             top_p: 0.9,
@@ -438,10 +445,10 @@ export class OllamaService {
         if (error.message && error.message.includes('does not support tools')) {
           console.warn(`[OllamaService] Model ${model} does not support native tools. Retrying without tools...`);
           this.modelCapabilities.set(model, { supportsTools: false });
-          
+
           // Update system instruction for the retry
           messages[0].content = SYSTEM_INSTRUCTION + FALLBACK_TOOL_INSTRUCTION;
-          
+
           response = await this.ollama.chat({
             model,
             messages,
@@ -464,7 +471,7 @@ export class OllamaService {
           const content = part.message.content;
           fullText += content;
           this.sendChunk({ type: 'text', data: content });
-          
+
           // Check for manual tool calls in the streamed text if native tools are not supported or not used
           if (!useNativeTools || !part.message.tool_calls) {
             await this.checkForManualToolCalls(fullText);
@@ -518,14 +525,14 @@ export class OllamaService {
       if (match) {
         const functionName = match[1];
         const argsStr = match[2];
-        
+
         // Try to parse args as JSON
         try {
           const args = JSON.parse(argsStr);
           // Check if we already executed this in this session (basic check)
           // In a real implementation, we'd want a more robust way to track processed tool calls
           // For now, we'll rely on the model following the "one call per task" logic or similar
-          
+
           // To prevent multiple executions of the same line as it's streamed:
           // We can use a property to track processed lines
           if (!(this as any)._processedLines) (this as any)._processedLines = new Set();

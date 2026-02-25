@@ -10,8 +10,9 @@ import MediaGallery from './MediaGallery';
 export default function Canvas() {
   const { panes, activePaneId, setActivePane, closePane, updatePaneContent, theme } = useStore();
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const tabContainerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const previousActivePaneId = useRef<string | null>(null);
 
   const activePane = panes.find((p) => p.id === activePaneId);
 
@@ -22,12 +23,6 @@ export default function Canvas() {
   const handleTabClose = (e: React.MouseEvent, pane: FilePane) => {
     e.stopPropagation();
     closePane(pane.id);
-  };
-
-  const handleContentChange = (content: string) => {
-    if (activePaneId) {
-      updatePaneContent(activePaneId, content);
-    }
   };
 
   // Drag and drop for tab reordering
@@ -45,32 +40,26 @@ export default function Canvas() {
   const handleDrop = (e: React.DragEvent, dropIndex: number) => {
     e.preventDefault();
     const dragIndex = draggingIndex;
-    
+
     if (dragIndex !== null && dragIndex !== dropIndex && dragIndex < panes.length && dropIndex < panes.length) {
       const newPanes = [...panes];
       const [draggedPane] = newPanes.splice(dragIndex, 1);
       newPanes.splice(dropIndex, 0, draggedPane);
-      
+
       // Update panes order in store
       useStore.setState({ panes: newPanes });
-      
+
       // Keep the same active pane
       if (activePaneId) {
         setActivePane(activePaneId);
       }
     }
-    
+
     setDraggingIndex(null);
-    setDragOverIndex(null);
   };
 
-  const handleDragEnd = (e?: React.DragEvent) => {
+  const handleDragEnd = () => {
     setDraggingIndex(null);
-    setDragOverIndex(null);
-    // Reset cursor after drag ends
-    if (e?.currentTarget instanceof HTMLElement) {
-      e.currentTarget.style.cursor = '';
-    }
   };
 
   // Mouse wheel scrolling for tabs
@@ -82,8 +71,38 @@ export default function Canvas() {
     }
   };
 
+  // Focus editor when active pane changes
+  useEffect(() => {
+    if (activePaneId && activePaneId !== previousActivePaneId.current) {
+      // Small delay to ensure DOM is ready
+      const timeoutId = setTimeout(() => {
+        // Dispatch custom event to notify editor to focus
+        window.dispatchEvent(new CustomEvent('canvas:pane-changed', { 
+          detail: { paneId: activePaneId } 
+        }));
+      }, 50);
+      
+      previousActivePaneId.current = activePaneId;
+    }
+    
+    return () => {
+      // Cleanup
+    };
+  }, [activePaneId]);
+
+  // Handle canvas click to focus editor
+  const handleCanvasClick = () => {
+    if (activePaneId) {
+      window.dispatchEvent(new CustomEvent('canvas:focus-editor'));
+    }
+  };
+
   return (
-    <div className="h-full w-full flex flex-col bg-background">
+    <div 
+      ref={canvasRef}
+      className="h-full w-full flex flex-col bg-background"
+      onClick={handleCanvasClick}
+    >
       {/* Tab bar - floating style */}
       <div className="flex-shrink-0 z-20 px-2 py-1">
         <div
@@ -102,9 +121,7 @@ export default function Canvas() {
               onDragStart={(e) => handleDragStart(e, index)}
               onDragOver={handleDragOver}
               onDrop={(e) => handleDrop(e, index)}
-              onDragEnd={(e) => handleDragEnd(e)}
-              onDragEnter={() => setDragOverIndex(index)}
-              onDragLeave={() => setDragOverIndex(null)}
+              onDragEnd={handleDragEnd}
               data-tooltip={pane.id.startsWith('untitled-') ? pane.name : pane.id}
               data-tooltip-position="bottom"
               className={`
@@ -141,7 +158,7 @@ export default function Canvas() {
                 onClick={(e) => handleTabClose(e, pane)}
                 className="ml-1.5 p-0.5 rounded hover:bg-white/10 flex-shrink-0 cursor-pointer"
                 onMouseDown={(e) => e.stopPropagation()}
-                data-tooltip="Close"
+                //data-tooltip="Close"
               >
                 <X className="h-2.5 w-2.5" />
               </span>
@@ -157,7 +174,7 @@ export default function Canvas() {
             key={pane.id}
             className="h-full w-full absolute top-0 left-0"
             style={{
-              visibility: pane.id === activePaneId ? 'visible' : 'hidden',
+              display: pane.id === activePaneId ? 'block' : 'none',
             }}
           >
             {pane.type === 'code' || pane.type === 'markdown' ? (
@@ -193,39 +210,65 @@ export default function Canvas() {
 
         {!activePane && (
           <div className="flex flex-col items-center justify-center h-full text-muted text-center p-8">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-20 w-20 mb-6 opacity-20"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4l2 2h4a2 2 0 012 2v12a4 4 0 01-4 4H7z"
+            {/* App icon as empty state */}
+            <div className="mb-6 flex flex-col items-center">
+              <img
+                src="./icon.png"
+                alt="CandyCode"
+                className="h-24 w-24 object-contain mb-4 opacity-100"
+                onError={(e) => {
+                  // Fallback to SVG if icon.png is not found
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  const svgFallback = document.createElement('div');
+                  svgFallback.innerHTML = `
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      class="h-20 w-20 mb-6 opacity-20"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4l2 2h4a2 2 0 012 2v12a4 4 0 01-4 4H7z"
+                      />
+                    </svg>
+                  `;
+                  target.parentNode?.insertBefore(svgFallback, target.nextSibling);
+                }}
               />
-            </svg>
+            </div>
             <h3 className="text-xl font-semibold text-foreground mb-2">Canvas is empty</h3>
             <p className="text-muted mb-8">Open a file from the explorer or create a new one to get started.</p>
             
             <div className="w-full max-w-md space-y-3">
               <h4 className="text-sm font-semibold text-muted mb-4">Keyboard Shortcuts</h4>
-              
+
               <div className="flex items-center justify-between px-4 py-2 bg-white/5 rounded-lg border border-white/10">
                 <span className="text-sm text-muted">Create New File</span>
                 <kbd className="px-2 py-1 text-xs font-semibold text-foreground bg-white/10 border border-white/10 rounded">Ctrl+N</kbd>
               </div>
-              
+
               <div className="flex items-center justify-between px-4 py-2 bg-white/5 rounded-lg border border-white/10">
                 <span className="text-sm text-muted">Open File</span>
                 <kbd className="px-2 py-1 text-xs font-semibold text-foreground bg-white/10 border border-white/10 rounded">Ctrl+O</kbd>
               </div>
-              
+
               <div className="flex items-center justify-between px-4 py-2 bg-white/5 rounded-lg border border-white/10">
                 <span className="text-sm text-muted">Save File</span>
                 <kbd className="px-2 py-1 text-xs font-semibold text-foreground bg-white/10 border border-white/10 rounded">Ctrl+S</kbd>
+              </div>
+
+              <div className="flex items-center justify-between px-4 py-2 bg-white/5 rounded-lg border border-white/10">
+                <span className="text-sm text-muted">New Window</span>
+                <div className="flex gap-1">
+                  <kbd className="px-2 py-1 text-xs font-semibold text-foreground bg-white/10 border border-white/10 rounded">Shift</kbd>
+                  <kbd className="px-2 py-1 text-xs font-semibold text-foreground bg-white/10 border border-white/10 rounded">Ctrl</kbd>
+                  <kbd className="px-2 py-1 text-xs font-semibold text-foreground bg-white/10 border border-white/10 rounded">N</kbd>
+                </div>
               </div>
             </div>
           </div>

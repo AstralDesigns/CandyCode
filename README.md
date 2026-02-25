@@ -1,4 +1,4 @@
-# AlphaStudio
+# CandyCode
 
 A futuristic AI-powered code editor and workspace with native local and non-local AI integration, built with Electron, React, and TypeScript.
 
@@ -17,7 +17,7 @@ A futuristic AI-powered code editor and workspace with native local and non-loca
 - **Agent Terminal** with permission prompts for elevated commands
 - **Dual Panel Modes**: File navigation and Project Explorer with search
 - **Image & File Context** attachment with preview
-- **Multiple Themes**: Light, Dark, Aether gradient, and custom theming support
+- **Multiple Themes**: Light, Dark, Alpha gradient, and custom theming support
 - **Cross-platform**: Linux, macOS, and Windows
 
 ## Showcase

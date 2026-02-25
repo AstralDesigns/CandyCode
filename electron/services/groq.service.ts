@@ -20,7 +20,7 @@ import {
 import { SmartContext } from './smart-context.service';
 import { AgenticLoopManager } from './agentic-loop.service';
 
-const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
+const SYSTEM_INSTRUCTION = `You are Candy, a friendly and autonomous coding assistant for CandyCode.
 
 AGENTIC BEHAVIOR:
 - Use function calls to execute actions - call functions directly, don't describe them
@@ -62,7 +62,8 @@ export interface GroqChatOptions {
     contextMode?: 'full' | 'smart' | 'minimal';
   };
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  isPro?: boolean;
+  isPro?: boolean; // Deprecated
+  licenseTier?: 'free' | 'standard' | 'pro';
 }
 
 export interface GroqChunkData {
@@ -192,12 +193,12 @@ export class GroqService {
     this.onChunkCallback = onChunk;
     this.taskCompleted = false;
     
-    // LICENSE CHECK: Set limits based on Pro status
-    const isPro = options.isPro === true;
-    const MAX_LOOPS = isPro ? 30 : 3;
-    
+    // LICENSE CHECK: Set limits based on License Tier
+    const tier = options.licenseTier || (options.isPro ? 'pro' : 'free');
+    const MAX_LOOPS = tier === 'free' ? 50 : (tier === 'pro' ? Infinity : 50);
+
     // Update loop manager with the new limit
-    this.loopManager = new AgenticLoopManager(MAX_LOOPS);
+    this.loopManager = new AgenticLoopManager(isFinite(MAX_LOOPS) ? MAX_LOOPS : 1000);
     this.loopManager.setIsActive(true);
     
     // Fresh AbortController for each request - critical fix for singleton state issue
@@ -233,11 +234,11 @@ export class GroqService {
       
       // LICENSE CHECK: Force minimal context if not Pro
       let selectedContextMode = options.context.contextMode || 'smart';
-      if (!isPro && selectedContextMode !== 'minimal') {
+      if (tier !== 'pro' && selectedContextMode !== 'minimal') {
            selectedContextMode = 'minimal';
-           this.sendChunk({ 
-             type: 'text', 
-             data: '> **Free Tier Notice:** Project Context restricted to "Minimal" mode. Upgrade to Pro for Smart/Full context awareness.\n\n' 
+           this.sendChunk({
+             type: 'text',
+             data: '> **Free Tier Notice:** Project Context restricted to "Minimal" mode. Upgrade to Pro for Smart/Full context awareness.\n\n'
            });
       }
 
@@ -472,10 +473,10 @@ export class GroqService {
       }
 
       // If we exit the loop without completion, notify the user about the limit
-      if (!this.loopManager.getTaskCompleted() && !isPro && this.loopManager.getCurrentIteration() >= MAX_LOOPS) {
-          this.sendChunk({ 
-              type: 'text', 
-              data: '\n\n**Free Tier Limit Reached:** The autonomous agent has stopped after 3 iterations. Upgrade to Pro for extended autonomous coding.' 
+      if (!this.loopManager.getTaskCompleted() && tier !== 'pro' && this.loopManager.getCurrentIteration() >= MAX_LOOPS) {
+          this.sendChunk({
+              type: 'text',
+              data: `\n\n**License Limit Reached:** The autonomous agent has stopped after ${MAX_LOOPS} iterations. Upgrade to Pro for extended autonomous coding.`
           });
       }
 

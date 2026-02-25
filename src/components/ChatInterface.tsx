@@ -65,7 +65,7 @@ type ChatEvent =
   | { type: 'summary'; content: string; id: string };
 
 export default function ChatInterface() {
-  const { messages, addMessage, contextFiles, contextImages, clearMessages, setMessages, removeContextFile, removeContextImage, setActivePlan, pendingDiffs, diffHistory, acceptedDiffs, rejectedDiffs, acceptDiff, rejectDiff, openFileByPath, artifacts, addArtifact, clearArtifacts, geminiApiKey, deepseekApiKey, groqApiKey, grokApiKey, moonshotApiKey, aiProvider, aiBackendModel, projectContext, contextMode, licenseTier } = useStore();
+  const { messages, addMessage, contextFiles, contextImages, clearMessages, setMessages, removeContextFile, removeContextImage, setActivePlan, pendingDiffs, diffHistory, acceptedDiffs, rejectedDiffs, acceptDiff, rejectDiff, openFileByPath, artifacts, addArtifact, clearArtifacts, geminiApiKey, deepseekApiKey, groqApiKey, grokApiKey, moonshotApiKey, aiProvider, aiBackendModel, projectContext, contextMode, licenseTier, windsurfApiKey, windsurfServiceKey, windsurfBYOKProvider, windsurfBYOKApiKey, windsurfUseBYOK } = useStore();
   const sessionService = useChatSessionService();
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -210,8 +210,28 @@ export default function ChatInterface() {
     if (!messageToSend || streaming) return;
 
     const effectiveProvider = aiProvider;
-    const selectedApiKey = effectiveProvider === 'grok' ? grokApiKey : effectiveProvider === 'groq' ? groqApiKey : effectiveProvider === 'moonshot' ? moonshotApiKey : effectiveProvider === 'ollama' ? undefined : geminiApiKey;
-    if (!selectedApiKey && effectiveProvider !== 'ollama') {
+    let selectedApiKey: string | undefined;
+    
+    // Handle API key selection based on provider
+    if (effectiveProvider === 'windsurf') {
+      if (windsurfUseBYOK) {
+        selectedApiKey = windsurfBYOKApiKey;
+      } else {
+        selectedApiKey = windsurfApiKey;
+      }
+    } else if (effectiveProvider === 'grok') {
+      selectedApiKey = grokApiKey;
+    } else if (effectiveProvider === 'groq') {
+      selectedApiKey = groqApiKey;
+    } else if (effectiveProvider === 'moonshot') {
+      selectedApiKey = moonshotApiKey;
+    } else if (effectiveProvider === 'ollama') {
+      selectedApiKey = undefined;
+    } else {
+      selectedApiKey = geminiApiKey;
+    }
+    
+    if (!selectedApiKey && effectiveProvider !== 'ollama' && !(effectiveProvider === 'windsurf')) {
       addMessage({ role: 'assistant', content: `Please set your ${effectiveProvider.charAt(0).toUpperCase() + effectiveProvider.slice(1)} API key in Settings to start chatting.` });
       return;
     }
@@ -489,7 +509,11 @@ export default function ChatInterface() {
             contextMode: contextMode,
           },
           conversationHistory: messages.map(m => ({ role: m.role, content: m.content })),
-          licenseTier: licenseTier // Pass license tier
+          licenseTier: licenseTier, // Pass license tier
+          // Windsurf-specific options
+          windsurfUseBYOK: effectiveProvider === 'windsurf' ? windsurfUseBYOK : undefined,
+          windsurfBYOKProvider: effectiveProvider === 'windsurf' && windsurfBYOKProvider ? windsurfBYOKProvider : undefined,
+          windsurfBYOKApiKey: effectiveProvider === 'windsurf' ? windsurfBYOKApiKey : undefined
         },
         handleChunk
       );
@@ -532,6 +556,28 @@ export default function ChatInterface() {
 
       } catch (e: any) {
         addMessage({ role: 'assistant', content: `Error: ${e.message}` });
+      }
+    }
+  };
+
+  const handleAddFile = async () => {
+    if (!window.electronAPI?.showOpenDialog) return;
+    
+    const result = await window.electronAPI.showOpenDialog({ properties: ['openFile'] });
+    if (result.canceled || !result.filePaths?.length) return;
+    
+    const filePath = result.filePaths[0];
+    const ext = filePath.split('.').pop()?.toLowerCase() || '';
+    const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+    
+    if (imageExtensions.includes(ext)) {
+      // Use file:// URL for images
+      useStore.getState().addContextImage({ path: filePath, data: `file://${filePath}` });
+    } else {
+      // Read content for text files
+      const fileResult = await window.electronAPI.readFile(filePath);
+      if (fileResult.content && !fileResult.error) {
+        useStore.getState().addContextFile({ path: filePath, content: fileResult.content });
       }
     }
   };
@@ -723,7 +769,7 @@ export default function ChatInterface() {
       <div className="flex items-center justify-between px-4 py-1.5 bg-white/5 backdrop-blur-md z-20">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: 'var(--indicator-color)' }} />
-          <span className="text-xs font-semibold text-muted uppercase tracking-wider">Alpha</span>
+          <span className="text-xs font-semibold text-muted uppercase tracking-wider">Candy</span>
         </div>
         <div className="flex items-center gap-1">
           <div className="relative" ref={sessionDropdownRef}>
@@ -895,7 +941,7 @@ export default function ChatInterface() {
               e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
             }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder="Ask Alpha to build something..."
+            placeholder="Ask Candy to build something..."
             disabled={streaming}
             className="w-full border rounded-2xl px-4 py-3 pr-4 resize-none focus:outline-none focus:ring-1 focus:ring-accent text-sm text-foreground placeholder:text-muted transition-all chat-textarea-scrollbar-hide"
             style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--input-border)' }}
@@ -904,7 +950,7 @@ export default function ChatInterface() {
           
           <div className="flex items-center justify-between mt-1 px-1">
             <div className="flex items-center gap-3">
-              <button onClick={() => window.electronAPI?.showOpenDialog({ properties: ['openFile'] }).then(r => { if (!r.canceled && r.filePaths[0]) window.electronAPI.readFile(r.filePaths[0]).then(fr => { if (fr.content) { const ext = r.filePaths[0].split('.').pop()?.toLowerCase(); if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext!)) { useStore.getState().addContextImage({ path: r.filePaths[0], data: fr.content }); } else { useStore.getState().addContextFile({ path: r.filePaths[0], content: fr.content }); } } }); })} className="flex items-center gap-1.5 text-[10px] text-muted hover:text-foreground transition-colors">
+              <button onClick={handleAddFile} className="flex items-center gap-1.5 text-[10px] text-muted hover:text-foreground transition-colors">
                 <FileText size={12} /> Add File
               </button>
               <button onClick={() => setShowTasks(!showTasks)} className={`flex items-center gap-1.5 text-[10px] transition-colors ${showTasks ? 'text-accent' : 'text-muted hover:text-foreground'}`}>

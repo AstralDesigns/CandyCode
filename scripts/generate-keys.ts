@@ -20,7 +20,7 @@ function generateLicenseKey(tier: Tier): string {
 }
 
 // Generate some keys
-console.log('--- AlphaStudio License Generator ---\n');
+console.log('--- CandyCode License Generator ---\n');
 
 console.log('STANDARD TIERS:');
 for (let i = 0; i < 5; i++) {

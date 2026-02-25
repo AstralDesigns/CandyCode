@@ -1,6 +1,6 @@
-# OAuth 2.0 Integration Guide for AlphaStudio & Tinker
+# OAuth 2.0 Integration Guide for CandyCode & Tinker
 
-This document outlines the OAuth 2.0 integration implemented in Tinker (v8.0+) and the roadmap for AlphaStudio, explaining why it is a superior alternative to API key authentication for Google Gemini models.
+This document outlines the OAuth 2.0 integration implemented in Tinker (v8.0+) and the roadmap for CandyCode, explaining why it is a superior alternative to API key authentication for Google Gemini models.
 
 ## Why OAuth 2.0?
 
@@ -25,16 +25,16 @@ Unified client that selects the authentication method based on configuration:
 - If `use_oauth` is disabled or fails, it falls back to API Key if available.
 - **Strict Mode**: When OAuth is selected, Tinker bypasses the API key parameter in the URL entirely.
 
-## OAuth Integration in AlphaStudio (Electron)
+## OAuth Integration in CandyCode (Electron)
 
-Integrating OAuth in a desktop app like AlphaStudio requires a slightly different approach than a CLI:
+Integrating OAuth in a desktop app like CandyCode requires a slightly different approach than a CLI:
 
 1.  **Authorization Flow**: Use Electron's `shell.openExternal` to open the authorization URL in the user's browser.
-2.  **Redirect Handling**: Set up a deep link (e.g., `alphastudio://auth`) or a temporary local server to capture the authorization code.
+2.  **Redirect Handling**: Set up a deep link (e.g., `candycode://auth`) or a temporary local server to capture the authorization code.
 3.  **Secure Storage**: Store the `refresh_token` and `access_token` in the OS keychain (using Electron's `safeStorage` or `keytar`) rather than a plain `token.json`.
 4.  **Service Integration**: Update `gemini.service.ts` to check for OAuth tokens before falling back to the API key.
 
-### Implementation Sketch for AlphaStudio:
+### Implementation Sketch for CandyCode:
 ```typescript
 // In electron/services/gemini.service.ts
 private async getHeaders() {
@@ -55,11 +55,11 @@ private getUrl(model: string) {
 }
 ```
 
-## Monetization & Packaging: AlphaStudio vs. Vertex AI
+## Monetization & Packaging: CandyCode vs. Vertex AI
 
-When packaging AlphaStudio for users, you have two primary paths for providing AI capabilities:
+When packaging CandyCode for users, you have two primary paths for providing AI capabilities:
 
-### 1. AlphaStudio (BYOK - Bring Your Own Key/OAuth)
+### 1. CandyCode (BYOK - Bring Your Own Key/OAuth)
 Users provide their own Google AI Studio API Key or OAuth credentials.
 - **Pros**: 
     - **Zero Cost**: You don't pay for the user's AI usage.
@@ -93,9 +93,9 @@ You host a backend that proxies requests to Google Cloud Vertex AI.
 
 ## Recommendation
 
-**For AlphaStudio's current stage, I recommend the OAuth (BYOK) approach.**
+**For CandyCode's current stage, I recommend the OAuth (BYOK) approach.**
 
-AlphaStudio is an agentic IDE designed for developers. These users are comfortable creating a Google Cloud project to get 60 RPM for free. It allows you to distribute the app without worrying about burning through a central budget or managing a complex billing backend.
+CandyCode is an agentic IDE designed for developers. These users are comfortable creating a Google Cloud project to get 60 RPM for free. It allows you to distribute the app without worrying about burning through a central budget or managing a complex billing backend.
 
 **Transition Strategy**:
 1.  **Phase 1**: Perfect the OAuth/API Key integration (BYOK).

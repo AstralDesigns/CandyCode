@@ -27,8 +27,8 @@ interface ChatSessionStore {
   saveSessions: () => void;
 }
 
-const STORAGE_KEY = 'alphastudio-chat-sessions';
-const CURRENT_SESSION_KEY = 'alphastudio-current-session-id';
+const STORAGE_KEY = 'candycode-chat-sessions';
+const CURRENT_SESSION_KEY = 'candycode-current-session-id';
 const MAX_SESSIONS = 50;
 
 export const useChatSessionService = create<ChatSessionStore>((set, get) => ({
@@ -211,7 +211,7 @@ export const useChatSessionService = create<ChatSessionStore>((set, get) => ({
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(get().sessions));
       if (get().currentSessionId) {
-        localStorage.setItem(CURRENT_SESSION_KEY, get().currentSessionId);
+        localStorage.setItem(CURRENT_SESSION_KEY, get().currentSessionId || '');
       }
     } catch (error) {
       console.error('Failed to save chat sessions:', error);

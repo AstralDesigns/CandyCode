@@ -20,7 +20,7 @@ else
 fi
 
 echo ""
-echo "Starting AlphaStudio in development mode..."
+echo "Starting CandyCode in development mode..."
 echo "Running: npm run dev"
 
 # Start the application

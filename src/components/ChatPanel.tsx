@@ -4,7 +4,7 @@ import UserTerminal from './UserTerminal';
 import { TerminalSquare, MessageSquare } from 'lucide-react';
 
 export default function ChatPanel() {
-  const [activeTab, setActiveTab] = useState<'alpha' | 'terminal'>('alpha');
+  const [activeTab, setActiveTab] = useState<'candy' | 'terminal'>('candy');
 
   return (
     <div className="flex flex-col w-full h-full bg-transparent overflow-hidden relative shadow-2xl">
@@ -12,18 +12,18 @@ export default function ChatPanel() {
       <div className="p-2 border-b border-white/5 flex-shrink-0 bg-background/50 backdrop-blur-md z-30">
         <div className="flex gap-1">
           <button
-            onClick={() => setActiveTab('alpha')}
+            onClick={() => setActiveTab('candy')}
             className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'alpha'
+              activeTab === 'candy'
                 ? 'text-white shadow-lg'
                 : 'bg-white/5 text-muted hover:bg-white/10'
             }`}
-            style={activeTab === 'alpha' ? {
+            style={activeTab === 'candy' ? {
               background: 'var(--accent-gradient)'
             } : {}}
           >
             <MessageSquare className="w-3.5 h-3.5" />
-            Alpha
+            Candy
           </button>
           <button
             onClick={() => setActiveTab('terminal')}
@@ -41,15 +41,15 @@ export default function ChatPanel() {
           </button>
         </div>
       </div>
-      
+
       {/* Content Area */}
       <div className="flex-1 relative overflow-hidden">
-        <div 
+        <div
           className="absolute inset-0 transition-opacity duration-200"
-          style={{ 
-            opacity: activeTab === 'alpha' ? 1 : 0, 
-            pointerEvents: activeTab === 'alpha' ? 'auto' : 'none',
-            zIndex: activeTab === 'alpha' ? 10 : 0
+          style={{
+            opacity: activeTab === 'candy' ? 1 : 0,
+            pointerEvents: activeTab === 'candy' ? 'auto' : 'none',
+            zIndex: activeTab === 'candy' ? 10 : 0
           }}
         >
           <ChatInterface />

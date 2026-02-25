@@ -14,7 +14,6 @@ export default function PDFCanvas({ filePath }: PDFCanvasProps) {
     const iframe = document.createElement('iframe');
     iframe.src = `file://${filePath}`;
     iframe.className = 'w-full h-full border-0';
-    iframe.style.minHeight = '800px';
 
     containerRef.current.innerHTML = '';
     containerRef.current.appendChild(iframe);

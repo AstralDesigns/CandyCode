@@ -7,7 +7,9 @@ exports.OllamaService = void 0;
 const ollama_1 = require("ollama");
 // @ts-ignore
 const node_fetch_1 = __importDefault(require("node-fetch"));
+const buffer_1 = require("buffer");
 const tool_definitions_1 = require("./tool-definitions");
+const smart_context_service_1 = require("./smart-context.service");
 const file_operations_service_1 = require("./file-operations.service");
 const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
 
@@ -90,7 +92,7 @@ class OllamaService {
                         read: async () => {
                             const result = await iterator.next();
                             // Node-fetch provides Buffers, browser-fetch/ollama expects Uint8Array or string
-                            if (result.value && Buffer.isBuffer(result.value)) {
+                            if (result.value && buffer_1.Buffer.isBuffer(result.value)) {
                                 result.value = new Uint8Array(result.value);
                             }
                             return result;
@@ -114,7 +116,7 @@ class OllamaService {
                         return {
                             read: async () => {
                                 const res = await cIterator.next();
-                                if (res.value && Buffer.isBuffer(res.value))
+                                if (res.value && buffer_1.Buffer.isBuffer(res.value))
                                     res.value = new Uint8Array(res.value);
                                 return res;
                             },
@@ -338,7 +340,31 @@ class OllamaService {
                 messages.push({ role: msg.role, content: msg.content });
             }
         }
+        // Build context: SmartContext for the project directory + any explicitly selected files
         let contextStr = '';
+        if (options.context?.project) {
+            const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
+            const contextMode = options.context.contextMode || 'smart';
+            if (isStartOfSession || contextMode === 'full') {
+                console.log(`[OllamaService] Building SmartContext for: ${options.context.project} (mode: ${contextMode})`);
+                try {
+                    // Wrap in a timeout so a slow/hanging SmartContext doesn't block the response
+                    const smartContext = new smart_context_service_1.SmartContext(options.context.project, contextMode);
+                    const buildPromise = smartContext.buildContext();
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SmartContext timeout after 15s')), 15000));
+                    const projectSummary = await Promise.race([buildPromise, timeoutPromise]);
+                    contextStr += projectSummary + '\n\n';
+                    console.log(`[OllamaService] SmartContext built (${projectSummary.length} chars)`);
+                }
+                catch (err) {
+                    console.error('[OllamaService] SmartContext failed, falling back to path only:', err.message);
+                    contextStr += `Active Project: ${options.context.project}\n\n`;
+                }
+            }
+            else {
+                contextStr += `Active Project: ${options.context.project}\nUse tools (list_files, read_file, search_code) to explore the codebase as needed.\n\n`;
+            }
+        }
         if (options.context?.files && options.context.files.length > 0) {
             contextStr += '## Project Files:\n';
             for (const file of options.context.files) {

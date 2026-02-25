@@ -1,105 +1,73 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.modelSearchService = exports.ModelSearchService = void 0;
+const axios_1 = __importDefault(require("axios"));
 class ModelSearchService {
+    mainWindow = null;
+    constructor(mainWindow = null) {
+        this.mainWindow = mainWindow;
+    }
     /**
      * Search HuggingFace model hub for compatible models
-     * Filters for models suitable for vLLM/Ollama (text-generation)
      */
-    async search(query, limit = 20) {
+    async searchModels(query) {
         try {
-            // HuggingFace API endpoint - no authentication required for public models
-            const url = new URL('https://huggingface.co/api/models');
-            url.searchParams.set('search', query);
-            url.searchParams.set('limit', limit.toString());
-            url.searchParams.set('sort', 'downloads'); // Sort by popularity
-            url.searchParams.set('direction', '-1'); // Descending
-            const response = await fetch(url.toString(), {
-                method: 'GET',
+            // Example API call to search for models
+            // This is a placeholder implementation
+            const response = await axios_1.default.get(`https://huggingface.co/api/models?search=${encodeURIComponent(query)}`, {
                 headers: {
-                    'User-Agent': 'AlphaStudio/1.0',
+                    'User-Agent': 'CandyCode/1.0',
                 },
-                signal: AbortSignal.timeout(10000),
+                params: {
+                    limit: 20,
+                    filter: 'gguf' // Looking for GGUF format models
+                }
             });
-            if (!response.ok) {
-                throw new Error(`HuggingFace API error: ${response.status} ${response.statusText}`);
-            }
-            const data = await response.json();
-            const models = Array.isArray(data) ? data : [];
-            // Filter for models compatible with vLLM/Ollama
-            const compatibleModels = models.filter((model) => {
-                // Check if it's a text generation model
-                const isTextGen = model.pipeline_tag === 'text-generation' ||
-                    model.tags?.includes('text-generation') ||
-                    model.tags?.includes('text-generation-inference') ||
-                    model.tags?.includes('llama') ||
-                    model.tags?.includes('mistral') ||
-                    model.tags?.includes('phi') ||
-                    model.tags?.includes('qwen') ||
-                    model.tags?.includes('gemma');
-                // Exclude certain model types that aren't suitable
-                const excludedTypes = ['image', 'audio', 'video', 'multimodal'];
-                const hasExcludedType = excludedTypes.some((type) => model.tags?.some((tag) => tag.toLowerCase().includes(type)));
-                return isTextGen && !hasExcludedType;
-            });
+            const models = response.data?.slice(0, 20) || [];
             return {
                 success: true,
-                models: compatibleModels.map((model) => ({
-                    id: model.id,
-                    downloads: model.downloads || 0,
-                    likes: model.likes || 0,
-                    tags: model.tags || [],
-                    model_type: model.model_type,
-                    pipeline_tag: model.pipeline_tag,
-                    library_name: model.library_name,
-                    author: model.author,
-                })),
+                models: models.map((model) => ({
+                    name: model.id,
+                    description: model.cardData?.tags?.join(', ') || 'No description available',
+                    downloads: model.downloads,
+                    likes: model.likes
+                }))
             };
         }
         catch (error) {
-            console.error('[ModelSearch] Error searching models:', error);
+            console.error('[ModelSearch] Error searching models:', error.message || 'Unknown error');
             return {
                 success: false,
-                models: [],
                 error: error.message || 'Failed to search models',
+                models: []
             };
         }
     }
-    /**
-     * Get detailed information about a specific model
-     */
     async getModelDetails(modelId) {
         try {
-            const response = await fetch(`https://huggingface.co/api/models/${modelId}`, {
-                method: 'GET',
+            const response = await axios_1.default.get(`https://huggingface.co/api/models/${modelId}`, {
                 headers: {
-                    'User-Agent': 'AlphaStudio/1.0',
-                },
-                signal: AbortSignal.timeout(10000),
+                    'User-Agent': 'CandyCode/1.0',
+                }
             });
-            if (!response.ok) {
-                throw new Error(`HuggingFace API error: ${response.status} ${response.statusText}`);
-            }
-            const model = await response.json();
             return {
                 success: true,
                 model: {
-                    id: model.id,
-                    downloads: model.downloads || 0,
-                    likes: model.likes || 0,
-                    tags: model.tags || [],
-                    model_type: model.model_type,
-                    pipeline_tag: model.pipeline_tag,
-                    library_name: model.library_name,
-                    author: model.author,
-                },
+                    id: response.data.id,
+                    tags: response.data.tags,
+                    cardData: response.data.cardData,
+                    siblings: response.data.siblings
+                }
             };
         }
         catch (error) {
-            console.error('[ModelSearch] Error getting model details:', error);
+            console.error('[ModelSearch] Error getting model details:', error.message || 'Unknown error');
             return {
                 success: false,
-                error: error.message || 'Failed to get model details',
+                error: error.message || 'Failed to get model details'
             };
         }
     }

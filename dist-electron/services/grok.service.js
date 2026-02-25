@@ -4,7 +4,8 @@ exports.GrokService = void 0;
 const tool_definitions_1 = require("./tool-definitions");
 const file_operations_service_1 = require("./file-operations.service");
 const smart_context_service_1 = require("./smart-context.service");
-const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
+const agentic_loop_service_1 = require("./agentic-loop.service");
+const SYSTEM_INSTRUCTION = `You are Candy, a friendly and autonomous coding assistant for CandyCode.
 
 AGENTIC BEHAVIOR:
 - Use function calls to execute actions - call functions directly, don't describe them
@@ -62,7 +63,10 @@ class GrokService {
     onChunkCallback = undefined;
     baseUrl = 'https://api.x.ai/v1/';
     taskCompleted = false;
-    constructor() { }
+    loopManager;
+    constructor() {
+        this.loopManager = new agentic_loop_service_1.AgenticLoopManager(30);
+    }
     setMainWindow(window) {
         this.mainWindow = window;
     }
@@ -113,6 +117,7 @@ class GrokService {
             console.log(`[GrokService] Function ${functionName} result:`, result);
             if (functionName === 'task_complete') {
                 this.taskCompleted = true;
+                this.loopManager.markTaskCompleted();
             }
             return { name: functionName, response: result };
         }
@@ -132,6 +137,12 @@ class GrokService {
     async chatStream(prompt, options, onChunk) {
         this.onChunkCallback = onChunk;
         this.taskCompleted = false;
+        // LICENSE CHECK: Set limits based on License Tier
+        const tier = options.licenseTier || (options.isPro ? 'pro' : 'free');
+        const MAX_LOOPS = tier === 'free' ? 50 : (tier === 'pro' ? Infinity : 50);
+        // Update loop manager with the new limit
+        this.loopManager = new agentic_loop_service_1.AgenticLoopManager(isFinite(MAX_LOOPS) ? MAX_LOOPS : 1000);
+        this.loopManager.setIsActive(true);
         // Fresh AbortController for each request
         this.cancelController = new AbortController();
         const timeoutId = setTimeout(() => this.cancelController?.abort(), 60000); // 60s timeout
@@ -156,7 +167,15 @@ class GrokService {
         // BUILD SMART CONTEXT IF PROJECT IS ACTIVE
         if (options.context?.project) {
             const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
-            const selectedContextMode = options.context.contextMode || 'smart';
+            // LICENSE CHECK: Force minimal context if not Pro
+            let selectedContextMode = options.context.contextMode || 'smart';
+            if (tier !== 'pro' && selectedContextMode !== 'minimal') {
+                selectedContextMode = 'minimal';
+                this.sendChunk({
+                    type: 'text',
+                    data: '> **Free Tier Notice:** Project Context restricted to "Minimal" mode. Upgrade to Pro for Smart/Full context awareness.\n\n'
+                });
+            }
             if (isStartOfSession || selectedContextMode === 'full') {
                 console.log(`[GrokService] Building project context with mode: ${selectedContextMode}`);
                 const smartContext = new smart_context_service_1.SmartContext(options.context.project, selectedContextMode);
@@ -175,17 +194,17 @@ class GrokService {
             contextText += '\n\n';
         }
         messages.push({ role: 'user', content: contextText + prompt });
-        const maxIterations = 30;
         let iteration = 0;
         try {
-            while (iteration < maxIterations && !this.taskCompleted) {
+            while (this.loopManager.shouldContinueLoop()) {
                 if (this.cancelController?.signal.aborted) {
                     this.sendChunk({ type: 'done' });
                     clearTimeout(timeoutId);
                     return;
                 }
-                iteration++;
-                console.log(`[GrokService] Iteration ${iteration}/${maxIterations}`);
+                this.loopManager.incrementIteration();
+                iteration++; // Keep local counter for logging
+                console.log(`[GrokService] Iteration ${this.loopManager.getCurrentIteration()}/${MAX_LOOPS}`);
                 const requestBody = {
                     model,
                     messages,
@@ -336,10 +355,7 @@ class GrokService {
                                 else if (finishReason === 'stop' && fullText && !this.taskCompleted) {
                                     // Model finished with text but no tool calls - add continuation prompt
                                     messages.push({ role: 'assistant', content: fullText });
-                                    messages.push({
-                                        role: 'user',
-                                        content: 'Continue with the task. Use the available tools to make progress. If done, call task_complete.'
-                                    });
+                                    // No continuation here, rely on loop manager or user
                                     fullText = '';
                                 }
                             }
@@ -357,6 +373,16 @@ class GrokService {
                 if (processedToolCallsThisIteration) {
                     console.log('[GrokService] Tool calls processed, continuing loop...');
                 }
+                else if (!fullText && !this.taskCompleted) {
+                    break;
+                }
+            }
+            // If we exit the loop without completion, notify the user about the limit
+            if (!this.loopManager.getTaskCompleted() && tier !== 'pro' && this.loopManager.getCurrentIteration() >= MAX_LOOPS) {
+                this.sendChunk({
+                    type: 'text',
+                    data: `\n\n**License Limit Reached:** The autonomous agent has stopped after ${MAX_LOOPS} iterations. Upgrade to Pro for extended autonomous coding.`
+                });
             }
             this.sendChunk({ type: 'done' });
             clearTimeout(timeoutId);
@@ -374,6 +400,7 @@ class GrokService {
         if (this.cancelController) {
             this.cancelController.abort();
         }
+        this.loopManager.setIsActive(false);
         this.onChunkCallback = undefined;
         this.sendChunk({ type: 'done' });
     }

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   executeCommand: (command: string, options?: any) => ipcRenderer.invoke('execute-command', command, options),
   getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  getAppAssetPath: (assetName: string) => ipcRenderer.invoke('get-app-asset-path', assetName),
   showContextMenu: (filePath: string, fileName: string, itemType: 'file' | 'folder') =>
     ipcRenderer.invoke('show-context-menu', filePath, fileName, itemType),
   copyFile: (sourcePath: string, destPath: string) =>
@@ -67,6 +68,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   project: {
     setCurrent: (projectPath: string | null) => ipcRenderer.invoke('project:set-current', projectPath),
+    getCurrent: () => ipcRenderer.invoke('project:get-current'),
     onLoadPath: (callback: (projectPath: string) => void) => {
       const handler = (_: any, projectPath: string) => callback(projectPath);
       ipcRenderer.on('project:load-path', handler);
@@ -74,6 +76,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.removeListener('project:load-path', handler);
       };
     },
+  },
+  app: {
+    onOpenFiles: (callback: (filePaths: string[]) => void) => {
+      const handler = (_: any, filePaths: string[]) => callback(filePaths);
+      ipcRenderer.on('app:open-files', handler);
+      return () => {
+        ipcRenderer.removeListener('app:open-files', handler);
+      };
+    },
+    ready: () => ipcRenderer.invoke('app:ready'),
+    newWindow: () => ipcRenderer.invoke('app:new-window'),
+    closeCurrentWindow: () => ipcRenderer.invoke('app:close-current-window'),
+    confirmCloseResponse: (response: { action: 'close' | 'cancel' | 'save' }) =>
+      ipcRenderer.invoke('app:confirm-close-response', response),
+  },
+  system: {
+    getTheme: () => ipcRenderer.invoke('system:get-theme'),
+    onThemeChange: (callback: (theme: { isDark: boolean }) => void) => {
+      ipcRenderer.invoke('system:on-theme-change');
+      const handler = (_: any, theme: { isDark: boolean }) => callback(theme);
+      ipcRenderer.on('system:theme-changed', handler);
+      return () => {
+        ipcRenderer.removeListener('system:theme-changed', handler);
+      };
+    },
+  },
+  eslint: {
+    lintFile: (filePath: string, content: string) =>
+      ipcRenderer.invoke('eslint:lint-file', filePath, content),
+    lintFiles: (files: Array<{ path: string; content: string }>) =>
+      ipcRenderer.invoke('eslint:lint-files', files),
+    setEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke('eslint:set-enabled', enabled),
+    isEnabled: () =>
+      ipcRenderer.invoke('eslint:is-enabled'),
+    reloadConfig: () =>
+      ipcRenderer.invoke('eslint:reload-config'),
   },
   on: (channel: string, callback: (event: any, ...args: any[]) => void) => {
     ipcRenderer.on(channel, callback);

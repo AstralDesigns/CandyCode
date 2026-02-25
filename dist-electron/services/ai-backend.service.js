@@ -6,6 +6,8 @@ const groq_service_1 = require("./groq.service");
 const grok_service_1 = require("./grok.service");
 const moonshot_service_1 = require("./moonshot.service");
 const ollama_service_1 = require("./ollama.service");
+const openai_service_1 = require("./openai.service");
+const anthropic_service_1 = require("./anthropic.service");
 class AIBackendService {
     mainWindow = null;
     geminiService;
@@ -13,12 +15,16 @@ class AIBackendService {
     grokService;
     moonshotService;
     ollamaService;
+    openaiService;
+    anthropicService;
     constructor() {
         this.geminiService = new gemini_service_1.GeminiService();
         this.groqService = new groq_service_1.GroqService();
         this.grokService = new grok_service_1.GrokService();
         this.moonshotService = new moonshot_service_1.MoonshotService();
         this.ollamaService = new ollama_service_1.OllamaService();
+        this.openaiService = new openai_service_1.OpenAIService();
+        this.anthropicService = new anthropic_service_1.AnthropicService();
     }
     /**
      * Set the main window for IPC communication
@@ -31,6 +37,8 @@ class AIBackendService {
         this.grokService.setMainWindow(window);
         this.moonshotService.setMainWindow(window);
         this.ollamaService.setMainWindow(window);
+        this.openaiService.setMainWindow(window);
+        this.anthropicService.setMainWindow(window);
     }
     /**
      * Optimize conversation history for API models
@@ -79,6 +87,8 @@ class AIBackendService {
             apiKeyLength: options.apiKey?.length || 0,
             hasContext: !!options.context,
             historyLength: options.conversationHistory?.length || 0,
+            isPro: options.isPro,
+            licenseTier: options.licenseTier
         });
         switch (provider) {
             case 'groq':
@@ -89,6 +99,10 @@ class AIBackendService {
                 return this.moonshotService.chatStream(prompt, options, onChunk);
             case 'ollama':
                 return this.ollamaService.chatStream(prompt, options, onChunk);
+            case 'openai':
+                return this.openaiService.chatStream(prompt, options, onChunk);
+            case 'anthropic':
+                return this.anthropicService.chatStream(prompt, options, onChunk);
             case 'gemini':
             default:
                 return this.geminiService.chatStream(prompt, options, onChunk, continuationState);
@@ -104,6 +118,8 @@ class AIBackendService {
         this.grokService.cancel();
         this.moonshotService.cancel();
         this.ollamaService.cancel();
+        this.openaiService.cancel();
+        this.anthropicService.cancel();
     }
     /**
      * Get list of available providers
@@ -135,6 +151,18 @@ class AIBackendService {
                 isFree: false
             },
             {
+                id: 'openai',
+                name: 'OpenAI',
+                description: 'Industry standard GPT-4 models. High reliability and quality.',
+                isFree: false
+            },
+            {
+                id: 'anthropic',
+                name: 'Anthropic',
+                description: 'Claude 3.5 Sonnet and Opus. Excellent reasoning and coding capabilities.',
+                isFree: false
+            },
+            {
                 id: 'ollama',
                 name: 'Ollama (Local)',
                 description: 'Run models locally for privacy and offline use. No API keys required.',
@@ -146,19 +174,23 @@ class AIBackendService {
      * Get combined list of models from all providers
      */
     async listModels() {
-        const [geminiModels, groqModels, grokModels, moonshotModels, ollamaModels] = await Promise.all([
+        const [geminiModels, groqModels, grokModels, moonshotModels, ollamaModels, openaiModels, anthropicModels] = await Promise.all([
             this.geminiService.listModels(),
             this.groqService.listModels(),
             this.grokService.listModels(),
             this.moonshotService.listModels(),
-            this.ollamaService.listModels()
+            this.ollamaService.listModels(),
+            this.openaiService.listModels(),
+            this.anthropicService.listModels()
         ]);
         const allModels = [
             ...geminiModels.models,
             ...grokModels.models,
             ...groqModels.models,
             ...moonshotModels.models,
-            ...ollamaModels.models
+            ...ollamaModels.models,
+            ...openaiModels.models,
+            ...anthropicModels.models
         ];
         return {
             success: true,
@@ -175,7 +207,7 @@ class AIBackendService {
      * Set provider (for compatibility - actual routing happens in chatStream)
      */
     setProvider(providerName) {
-        const validProviders = ['gemini', 'groq', 'grok', 'moonshot', 'ollama'];
+        const validProviders = ['gemini', 'groq', 'grok', 'moonshot', 'ollama', 'openai', 'anthropic'];
         return validProviders.includes(providerName);
     }
     /**

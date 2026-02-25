@@ -1,15 +1,18 @@
 {
-  "name": "alphastudio",
-  "productName": "AlphaStudio",
+  "name": "candycode",
+  "productName": "CandyCode",
   "version": "1.0.0",
-  "description": "A futuristic AI-powered code editor and workspace with Gemini integration",
+  "description": "A futuristic AI-powered code editor and workspace with AI integration",
   "main": "dist-electron/main.js",
-  "author": "AlphaStudio",
+  "author": {
+    "name": "CandyCode Team",
+    "email": "CandyCodeTeam@proton.me"
+  },
   "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
-    "dev:hardware": "ALPHASTUDIO_HARDWARE_ACCEL=1 concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:hardware": "CANDYCODE_HARDWARE_ACCEL=1 concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
     "dev:electron": "tsc -p electron/tsconfig.json && npx wait-on http://localhost:5173 && electron .",
     "build": "npm run build:vite && npm run build:electron",
@@ -18,13 +21,17 @@
     "package": "npm run build && electron-builder",
     "package:linux": "npm run build && electron-builder --linux",
     "package:mac": "npm run build && electron-builder --mac",
-    "package:win": "npm run build && electron-builder --win"
+    "package:win": "npm run build && electron-builder --win",
+    "install-app": "npm install && node scripts/install-app.js",
+    "uninstall-app": "node scripts/uninstall-app.js",
+    "update-app": "node scripts/update-app.js"
   },
   "dependencies": {
     "@monaco-editor/loader": "^1.7.0",
     "@monaco-editor/react": "^4.7.0",
     "clsx": "^2.1.1",
     "electron-fetch": "^1.9.1",
+    "eslint": "^8.57.0",
     "framer-motion": "^11.5.4",
     "glob": "^11.1.0",
     "lucide-react": "^0.447.0",
@@ -43,6 +50,7 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@types/eslint": "^9.6.1",
     "@types/node": "^22.5.5",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
@@ -58,20 +66,32 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.alphastudio.app",
-    "productName": "AlphaStudio",
+    "appId": "com.candycode.app",
+    "productName": "CandyCode",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": [
+          "icon.png",
+          "icon.ico",
+          "icon.icns",
+          "tray/**/*"
+        ]
+      }
     ],
     "linux": {
       "target": [
         "AppImage",
-        "deb",
-        "rpm"
+        "deb"
       ],
       "category": "Development",
       "icon": "assets/icon.png"

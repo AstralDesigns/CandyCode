@@ -1,4 +1,4 @@
-import { Check, Circle } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { useStore } from '../store';
 import { ProjectPlan } from '../models/plan.model';
 

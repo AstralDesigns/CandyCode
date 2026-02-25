@@ -20,7 +20,7 @@ import {
 import { TOOL_DEFINITIONS } from './tool-definitions';
 import { SmartContext } from './smart-context.service';
 
-const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
+const SYSTEM_INSTRUCTION = `You are Candy, a friendly and autonomous coding assistant for CandyCode.
 
 AGENTIC BEHAVIOR:
 - Use function calls to execute actions - call functions directly, don't describe them
@@ -182,7 +182,7 @@ export class GeminiService {
     try {
       const result = await this.mainWindow.webContents.executeJavaScript(`
         (() => {
-          const store = window.__ALPHASTUDIO_STORE__;
+          const store = window.__CANDYCODE_STORE__;
           if (!store) return false;
           const state = store.getState();
           return state.pendingDiffs && state.pendingDiffs.size > 0;
@@ -280,7 +280,8 @@ export class GeminiService {
     prompt: string,
     options: GeminiChatOptions,
     onChunk?: (chunk: GeminiChunkData) => void,
-    continuationState?: ContinuationState
+    continuationState?: ContinuationState,
+    window?: BrowserWindow
   ): Promise<void> {
     this.onChunkCallback = onChunk;
     
@@ -288,11 +289,12 @@ export class GeminiService {
     const tier = options.licenseTier || (options.isPro ? 'pro' : 'free');
     
     // Define limits
-    const limits = {
-        free: { maxLoops: 3, allowSmartContext: false, allowFullContext: false },
-        standard: { maxLoops: 15, allowSmartContext: true, allowFullContext: false },
-        pro: { maxLoops: 50, allowSmartContext: true, allowFullContext: true }
-    }[tier] || { maxLoops: 3, allowSmartContext: false, allowFullContext: false };
+    const allLimits = {
+        free: { maxLoops: 50, allowSmartContext: false, allowFullContext: false },
+        standard: { maxLoops: 15, allowSmartContext: true, allowFullContext: false }, // Kept for type compatibility
+        pro: { maxLoops: Infinity, allowSmartContext: true, allowFullContext: true }
+    };
+    const limits = allLimits[tier] || { maxLoops: 50, allowSmartContext: false, allowFullContext: false };
     
     // Update loop manager with the new limit
     this.loopManager = new AgenticLoopManager(limits.maxLoops);

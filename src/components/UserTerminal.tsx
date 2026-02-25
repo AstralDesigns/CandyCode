@@ -211,7 +211,7 @@ export default function UserTerminal() {
         console.log('[Terminal] PTY created');
         
         // Wire up data listener
-        const disposeData = window.electronAPI.pty.onData(({ id, data }) => {
+        window.electronAPI.pty.onData(({ id, data }) => {
           if (id === ptyId.current && xtermRef.current) {
             xtermRef.current.write(data);
           }

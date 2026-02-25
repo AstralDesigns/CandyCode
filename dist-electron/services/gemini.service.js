@@ -5,7 +5,7 @@ const agentic_loop_service_1 = require("./agentic-loop.service");
 const file_operations_service_1 = require("./file-operations.service");
 const tool_definitions_1 = require("./tool-definitions");
 const smart_context_service_1 = require("./smart-context.service");
-const SYSTEM_INSTRUCTION = `You are Alpha, a friendly and autonomous coding assistant for AlphaStudio.
+const SYSTEM_INSTRUCTION = `You are Candy, a friendly and autonomous coding assistant for CandyCode.
 
 AGENTIC BEHAVIOR:
 - Use function calls to execute actions - call functions directly, don't describe them
@@ -132,7 +132,7 @@ class GeminiService {
         try {
             const result = await this.mainWindow.webContents.executeJavaScript(`
         (() => {
-          const store = window.__ALPHASTUDIO_STORE__;
+          const store = window.__CANDYCODE_STORE__;
           if (!store) return false;
           const state = store.getState();
           return state.pendingDiffs && state.pendingDiffs.size > 0;
@@ -212,8 +212,19 @@ class GeminiService {
             this.sendChunk({ type: 'function_result', name: functionName, data: errorResult, callId });
         }
     }
-    async chatStream(prompt, options, onChunk, continuationState) {
+    async chatStream(prompt, options, onChunk, continuationState, window) {
         this.onChunkCallback = onChunk;
+        // LICENSE CHECK: Set limits based on License Tier
+        const tier = options.licenseTier || (options.isPro ? 'pro' : 'free');
+        // Define limits
+        const allLimits = {
+            free: { maxLoops: 50, allowSmartContext: false, allowFullContext: false },
+            standard: { maxLoops: 15, allowSmartContext: true, allowFullContext: false }, // Kept for type compatibility
+            pro: { maxLoops: Infinity, allowSmartContext: true, allowFullContext: true }
+        };
+        const limits = allLimits[tier] || { maxLoops: 50, allowSmartContext: false, allowFullContext: false };
+        // Update loop manager with the new limit
+        this.loopManager = new agentic_loop_service_1.AgenticLoopManager(limits.maxLoops);
         if (continuationState) {
             this.originalUserInput = continuationState.userInput;
             this.filesCreated = new Set(continuationState.filesCreated);
@@ -264,7 +275,22 @@ class GeminiService {
             // BUILD SMART CONTEXT IF PROJECT IS ACTIVE
             if (options.context?.project) {
                 const isStartOfSession = !options.conversationHistory || options.conversationHistory.length < 2;
-                const selectedContextMode = options.context.contextMode || 'smart';
+                // LICENSE CHECK: Downgrade context mode if not allowed
+                let selectedContextMode = options.context.contextMode || 'smart';
+                // Downgrade logic based on tier capabilities
+                if (!limits.allowFullContext && selectedContextMode === 'full') {
+                    selectedContextMode = limits.allowSmartContext ? 'smart' : 'minimal';
+                }
+                else if (!limits.allowSmartContext && selectedContextMode === 'smart') {
+                    selectedContextMode = 'minimal';
+                }
+                // Notify user if downgraded (only if it differs from what was requested)
+                if (selectedContextMode !== options.context.contextMode) {
+                    this.sendChunk({
+                        type: 'text',
+                        data: `> **License Limit:** Context downgraded to "${selectedContextMode}". Upgrade your license for better context awareness.\n\n`
+                    });
+                }
                 if (isStartOfSession || selectedContextMode === 'full') {
                     console.log(`[GeminiService] Building project context with mode: ${selectedContextMode}`);
                     const smartContext = new smart_context_service_1.SmartContext(options.context.project, selectedContextMode);
@@ -431,6 +457,13 @@ class GeminiService {
                     this.sendChunk({ type: 'done' });
                     return;
                 }
+            }
+            // If we exit the loop without completion, notify the user about the limit
+            if (!this.loopManager.getTaskCompleted() && tier !== 'pro' && this.loopManager.getCurrentIteration() >= limits.maxLoops) {
+                this.sendChunk({
+                    type: 'text',
+                    data: `\n\n**License Limit Reached:** The autonomous agent has stopped after ${limits.maxLoops} iterations. Upgrade to a higher tier for extended autonomous coding.`
+                });
             }
             this.sendChunk({ type: 'done' });
         }

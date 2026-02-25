@@ -19,7 +19,7 @@ export const useThumbnailService = create<ThumbnailStore>((set, get) => ({
   },
   
   loadThumbnail: async (filePath: string, fileName: string) => {
-    const { loadedThumbnails, thumbnailUrls } = get();
+    const { loadedThumbnails } = get();
     
     if (loadedThumbnails.has(filePath)) {
       return;

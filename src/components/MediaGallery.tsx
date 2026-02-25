@@ -113,23 +113,17 @@ export default function MediaGallery({ mediaItems, mediaType }: MediaGalleryProp
   const toggleContext = async (e: React.MouseEvent, item: FileSystemItem) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     if (mediaType !== 'image') return;
-    
+
     const { removeContextImage } = useStore.getState();
     const index = contextImages.findIndex(img => img.path === item.path);
 
     if (index !== -1) {
       removeContextImage(index);
-    } else if (window.electronAPI?.readFile) {
-      try {
-        const result = await window.electronAPI.readFile(item.path);
-        if (result.content && !result.error) {
-          addContextImage({ path: item.path, data: result.content });
-        }
-      } catch (error) {
-        console.error('Failed to add image to context:', error);
-      }
+    } else {
+      // Use file:// URL instead of reading file content
+      addContextImage({ path: item.path, data: `file://${item.path}` });
     }
   };
 

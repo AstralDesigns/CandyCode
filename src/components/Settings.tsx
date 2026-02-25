@@ -1,9 +1,10 @@
-import { X, Save, Palette, Cpu, ExternalLink, Key, Plus, Trash2, Edit2, Check, Zap, Globe, Brain, Moon, Server, Search, Download, Loader2, TerminalSquare, CreditCard, Lock, Shield, Bot, Sparkles, Wind, Coins } from 'lucide-react';
+import { X, Save, Palette, Cpu, ExternalLink, Key, Plus, Trash2, Edit2, Check, Zap, Globe, Brain, Moon, Server, Search, Download, Loader2, TerminalSquare, CreditCard, Lock, Shield, Bot, Sparkles, Wind, Coins, ChevronUp, ChevronDown, Keyboard } from 'lucide-react';
 import { useStore, CustomTheme, TerminalSettings } from '../store';
 import { useState, useEffect, useRef } from 'react';
 import Dropdown from './ui/Dropdown';
+import HotkeySettings from './HotkeySettings';
 
-type Tab = 'themes' | 'terminal' | 'license' | 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic' | 'windsurf';
+type Tab = 'themes' | 'terminal' | 'license' | 'groq' | 'grok' | 'gemini' | 'moonshot' | 'ollama' | 'openai' | 'anthropic' | 'windsurf' | 'hotkeys';
 
 const DEFAULT_CUSTOM_THEME: Omit<CustomTheme, 'id'> = {
   name: 'New Custom Theme',
@@ -254,7 +255,7 @@ const WINDSURF_MODELS = [
 export default function Settings() {
   const { 
     showSettings, 
-    setShowSettings, 
+    setShowSettings,
     theme, 
     setTheme, 
     customThemes,
@@ -305,11 +306,29 @@ export default function Settings() {
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<Tab>(activeSettingsTab as Tab);
+  const [showSidebar, setShowSidebar] = useState(true); // Start shown, will adjust in useEffect
 
   // Sync local tab state with store
   useEffect(() => {
     setActiveSettingsTab(activeTab);
   }, [activeTab, setActiveSettingsTab]);
+
+  // Detect mobile/tablet screen size and adjust sidebar
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      // On mobile, sidebar starts hidden; on desktop, starts shown
+      setShowSidebar(!mobile);
+    };
+    
+    // Initial check
+    checkMobile();
+    
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   const [deepseekKey, setDeepseekKey] = useState(deepseekApiKey);
   const [groqKey, setGroqKey] = useState(groqApiKey);
@@ -549,8 +568,8 @@ export default function Settings() {
     setWindsurfBYOKApiKey(windsurfBYOKKeyValue);
     setWindsurfUseBYOK(windsurfUseBYOKValue);
     setLicenseKey(localLicenseKey);
-    
-    setAIProvider(activeTab === 'themes' || activeTab === 'terminal' || activeTab === 'license' ? aiProvider : activeTab);
+
+    setAIProvider(activeTab === 'themes' || activeTab === 'terminal' || activeTab === 'license' || activeTab === 'hotkeys' ? aiProvider : activeTab);
     
     if (activeTab !== 'themes' && activeTab !== 'terminal' && activeTab !== 'license') {
       const models = getModelsForProvider();
@@ -737,9 +756,9 @@ export default function Settings() {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-8">
-      <div 
+      <div
         ref={containerRef}
-        className="w-full max-w-3xl rounded-xl border shadow-2xl flex flex-col max-h-[90vh] transition-colors"
+        className="w-full max-w-3xl rounded-xl border shadow-2xl flex flex-col max-h-[90vh] overflow-hidden transition-colors"
         style={{ backgroundColor: 'var(--settings-bg)', borderColor: 'var(--border-color)' }}
       >
         <div className="p-5 border-b flex items-center justify-between shrink-0" style={{ borderColor: 'var(--border-color)' }}>
@@ -747,17 +766,41 @@ export default function Settings() {
             <SettingsIcon className="w-5 h-5 text-accent" />
             Settings
           </h2>
-          <button 
-            onClick={() => setShowSettings(false)}
-            className="p-1.5 hover:bg-white/5 rounded-md text-muted hover:text-foreground transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSidebar(!showSidebar)}
+              className="p-1.5 hover:bg-white/5 rounded-md text-muted hover:text-foreground transition-colors"
+              data-tooltip={showSidebar ? "Hide sidebar" : "Show sidebar"}
+              data-tooltip-position="bottom"
+              data-tooltip-align="center"
+            >
+              {showSidebar ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => setShowSettings(false)}
+              className="p-1.5 hover:bg-white/5 rounded-md text-muted hover:text-foreground transition-colors"
+              data-tooltip="Close settings"
+              data-tooltip-position="bottom"
+              data-tooltip-align="center"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-col md:flex-row h-full overflow-hidden">
           {/* Sidebar Tabs */}
-          <div className="w-full md:w-56 p-2 border-b md:border-b-0 md:border-r overflow-y-auto space-y-1 shrink-0" style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+          {showSidebar && (
+          <div 
+            className="w-full md:w-60 lg:w-56 p-2 border-b md:border-b-0 md:border-r overflow-y-auto custom-scrollbar-mobile shrink-0" 
+            style={{ 
+              borderColor: 'var(--border-color)', 
+              backgroundColor: 'var(--bg-secondary)',
+              maxHeight: '50vh',
+              flex: '0 0 auto'
+            }}
+          >
+            <div className="space-y-1">
             <button onClick={() => setActiveTab('license')} className={tabClass('license')}>
               <CreditCard className="w-4 h-4" /> License
             </button>
@@ -767,7 +810,10 @@ export default function Settings() {
             <button onClick={() => setActiveTab('terminal')} className={tabClass('terminal')}>
               <TerminalSquare className="w-4 h-4" /> Terminal
             </button>
-            
+            <button onClick={() => setActiveTab('hotkeys')} className={tabClass('hotkeys')}>
+              <Keyboard className="w-4 h-4" /> Hotkeys
+            </button>
+
             <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-3 py-2 mt-4">AI Providers</div>
             <button onClick={() => setActiveTab('gemini')} className={tabClass('gemini')}>
               <Globe className="w-4 h-4" /> Gemini
@@ -793,10 +839,11 @@ export default function Settings() {
             <button onClick={() => setActiveTab('ollama')} className={tabClass('ollama')}>
               <Server className="w-4 h-4" /> Ollama (Local)
             </button>
+            </div>
           </div>
+          )}
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-            
+          <div className="flex-1 min-w-0 overflow-y-auto custom-scrollbar p-6">
             {/* License Tab */}
             {activeTab === 'license' && (
               <div className="space-y-6">
@@ -806,7 +853,7 @@ export default function Settings() {
                       <Shield className="w-6 h-6 text-accent" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-medium text-foreground mb-1">AlphaStudio License</h3>
+                      <h3 className="text-sm font-medium text-foreground mb-1">CandyCode License</h3>
                       <p className="text-xs text-muted leading-relaxed">
                         Unlock autonomous agentic capabilities, unlimited loops, and smart context compression.
                       </p>
@@ -814,7 +861,7 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* Free Tier */}
                   <div className={`p-4 rounded-xl border flex flex-col h-full transition-all ${licenseTier === 'free' ? 'border-accent bg-accent/5' : 'border-border bg-white/5 opacity-70'}`}>
                     <div className="flex justify-between items-start mb-2">
@@ -825,33 +872,11 @@ export default function Settings() {
                       <li className="flex items-center gap-2"><Check className="w-3 h-3 text-foreground" /> Unlimited Chat</li>
                       <li className="flex items-center gap-2"><Check className="w-3 h-3 text-foreground" /> BYO Keys</li>
                       <li className="flex items-center gap-2"><Check className="w-3 h-3 text-foreground" /> Local Models</li>
-                      <li className="flex items-center gap-2 text-amber-400"><Lock className="w-3 h-3" /> Max 3 Loops</li>
+                      <li className="flex items-center gap-2 text-amber-400"><Lock className="w-3 h-3" /> Max 50 Loops</li>
                       <li className="flex items-center gap-2 text-amber-400"><Lock className="w-3 h-3" /> Basic Context</li>
                     </ul>
                   </div>
 
-                  {/* Standard Tier */}
-                  <div className={`p-4 rounded-xl border flex flex-col h-full transition-all ${licenseTier === 'standard' ? 'border-blue-500 bg-blue-500/10' : 'border-border bg-white/5'}`}>
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-semibold text-foreground text-sm">Standard</h4>
-                      {licenseTier === 'standard' && <span className="text-[9px] bg-blue-500 text-white px-2 py-0.5 rounded-full font-bold">CURRENT</span>}
-                    </div>
-                    <ul className="space-y-2 text-xs text-muted mt-2 flex-1">
-                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-blue-400" /> <b>15 Auto Loops</b></li>
-                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-blue-400" /> <b>Smart Context</b></li>
-                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-blue-400" /> Standard Support</li>
-                    </ul>
-                    {licenseTier !== 'standard' && licenseTier !== 'pro' && (
-                      <a 
-                        href="https://buy.stripe.com/test_standard" 
-                        target="_blank"
-                        rel="noopener noreferrer" 
-                        className="mt-4 w-full py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
-                      >
-                        Buy ($19) <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                  </div>
 
                   {/* Pro Tier */}
                   <div className={`p-4 rounded-xl border flex flex-col h-full transition-all ${licenseTier === 'pro' ? 'border-green-500 bg-green-500/10' : 'border-border bg-white/5'}`}>
@@ -860,7 +885,7 @@ export default function Settings() {
                       {licenseTier === 'pro' && <span className="text-[9px] bg-green-500 text-white px-2 py-0.5 rounded-full font-bold">CURRENT</span>}
                     </div>
                     <ul className="space-y-2 text-xs text-muted mt-2 flex-1">
-                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> <b>50 Auto Loops</b></li>
+                      <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> <b>Infinite Loops</b></li>
                       <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> <b>Full Context</b></li>
                       <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> Priority Support</li>
                       <li className="flex items-center gap-2"><Check className="w-3 h-3 text-green-400" /> Early Access</li>
@@ -908,9 +933,9 @@ export default function Settings() {
                     )}
                   </div>
                   <p className="mt-2 text-[10px] text-muted">
-                    {licenseTier !== 'free' 
-                      ? `Your ${licenseTier.charAt(0).toUpperCase() + licenseTier.slice(1)} license is active. Thank you for supporting AlphaStudio!` 
-                      : "Enter a key starting with 'ALPHA-PRO-' or 'ALPHA-STD-' to activate features."}
+                    {licenseTier !== 'free'
+                      ? `Your ${licenseTier.charAt(0).toUpperCase() + licenseTier.slice(1)} license is active. Thank you for supporting CandyCode!`
+                      : "Enter a key starting with 'ALPHA-PRO-' to activate features."}
                   </p>
                 </div>
               </div>
@@ -1422,15 +1447,15 @@ export default function Settings() {
                     }}
                     disabled={!getProviderKey() && activeTab !== 'windsurf'}
                     className={`w-full py-2.5 rounded-lg text-sm font-medium transition-all ${
-                      aiProvider === activeTab 
-                        ? 'bg-accent text-white shadow-lg shadow-accent/20' 
+                      aiProvider === activeTab
+                        ? 'bg-gradient-to-r from-accent to-accent/80 text-white shadow-lg shadow-accent/30 font-semibold'
                         : 'bg-white/5 text-muted hover:text-foreground hover:bg-white/10 border border-border'
                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     {aiProvider === activeTab ? (
                       <div className="flex items-center justify-center gap-2">
                         <Check className="w-4 h-4" />
-                        Currently Active
+                        <span className="font-semibold">Currently Active</span>
                       </div>
                     ) : (
                       `Set ${getProviderName()} as Active Provider`
@@ -1450,7 +1475,7 @@ export default function Settings() {
                     <div className="text-xs text-muted leading-relaxed">
                       <p className="text-foreground font-medium mb-1">Agentic Capabilities</p>
                       <p>
-                        AlphaStudio uses native function calling with {getProviderName()} to interact with your files and terminal.
+                        CandyCode uses native function calling with {getProviderName()} to interact with your files and terminal.
                         This enables autonomous coding, project planning, and web searching.
                         {activeTab === 'grok' && ' Grok (xAI) provides better rate limits than Groq with OpenAI-compatible API.'}
                         {activeTab === 'groq' && ' Groq provides extremely fast inference with Llama 3.3 70B (128K context).'}
@@ -1641,15 +1666,15 @@ export default function Settings() {
                     }}
                     disabled={!Array.isArray(ollamaModels) || ollamaModels.length === 0 || !serverStatus?.running}
                     className={`w-full py-2.5 rounded-lg text-sm font-medium transition-all ${
-                      aiProvider === 'ollama' 
-                        ? 'bg-accent text-white shadow-lg shadow-accent/20' 
+                      aiProvider === 'ollama'
+                        ? 'bg-gradient-to-r from-accent to-accent/80 text-white shadow-lg shadow-accent/30 font-semibold'
                         : 'bg-white/5 text-muted hover:text-foreground hover:bg-white/10 border border-border'
                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     {aiProvider === 'ollama' ? (
                       <div className="flex items-center justify-center gap-2">
                         <Check className="w-4 h-4" />
-                        Currently Active
+                        <span className="font-semibold">Currently Active</span>
                       </div>
                     ) : (
                       !Array.isArray(ollamaModels) || ollamaModels.length === 0 ? "Install at least one model to use Ollama" :
@@ -1692,6 +1717,13 @@ export default function Settings() {
                 </div>
               </div>
             )}
+
+            {/* Hotkeys Tab */}
+            {activeTab === 'hotkeys' && (
+              <div className="space-y-6">
+                <HotkeySettings />
+              </div>
+            )}
           </div>
         </div>
 
@@ -1717,7 +1749,7 @@ export default function Settings() {
       {/* Settings Icon Component */}
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
+          width: 4px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
           background: transparent;
@@ -1727,6 +1759,23 @@ export default function Settings() {
           border-radius: 20px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(155, 155, 155, 0.4);
+        }
+        /* Mobile scrollbar - more visible for touch devices */
+        .custom-scrollbar-mobile {
+          -webkit-overflow-scrolling: touch;
+        }
+        .custom-scrollbar-mobile::-webkit-scrollbar {
+          width: 4px;
+        }
+        .custom-scrollbar-mobile::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar-mobile::-webkit-scrollbar-thumb {
+          background: rgba(155, 155, 155, 0.2);
+          border-radius: 20px;
+        }
+        .custom-scrollbar-mobile::-webkit-scrollbar-thumb:hover {
           background: rgba(155, 155, 155, 0.4);
         }
       `}</style>

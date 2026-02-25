@@ -11,7 +11,7 @@ export interface AIBackendChunk {
 }
 
 export interface ChatOptions {
-  provider?: 'gemini' | 'groq' | 'grok' | 'moonshot' | 'ollama' | 'openai' | 'anthropic';
+  provider?: 'gemini' | 'groq' | 'grok' | 'moonshot' | 'ollama' | 'openai' | 'anthropic' | 'windsurf';
   apiKey?: string;
   model?: string;
   context?: {
@@ -23,6 +23,9 @@ export interface ChatOptions {
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   isPro?: boolean; // Deprecated
   licenseTier?: 'free' | 'standard' | 'pro';
+  windsurfUseBYOK?: boolean;
+  windsurfBYOKProvider?: 'openai' | 'anthropic' | 'google';
+  windsurfBYOKApiKey?: string;
 }
 
 export class AIBackendApiService {
@@ -47,6 +50,19 @@ export class AIBackendApiService {
     options: ChatOptions,
     onChunk: (chunk: AIBackendChunk) => void
   ): Promise<void> {
+    if (options.provider === 'windsurf') {
+      // Use Windsurf service directly
+      const { windsurfService } = await import('./windsurf.service');
+      return windsurfService.chatStream(prompt, {
+        provider: options.windsurfBYOKProvider,
+        apiKey: options.windsurfBYOKApiKey,
+        model: options.model,
+        context: options.context,
+        conversationHistory: options.conversationHistory,
+        useBYOK: options.windsurfUseBYOK
+      }, onChunk);
+    }
+
     if (!window.electronAPI?.aiBackend) {
       throw new Error('Electron API not available');
     }

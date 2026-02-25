@@ -71,6 +71,7 @@ export default function Sidebar() {
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: any[] } | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isProjectLoadingRef = useRef(false); // Prevent race conditions
 
   // Helper to normalize paths for comparison
   const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -256,28 +257,54 @@ export default function Sidebar() {
     }
   };
 
-  const openProject = useCallback(async (projectPath: string) => {
+  const openProject = useCallback(async (projectPath: string, skipSave = false) => {
     const { setProjectContext, setIsBuildingContext } = useStore.getState();
     if (!window.electronAPI) return;
-    
+
+    // Prevent race conditions - only one project load at a time
+    if (isProjectLoadingRef.current) {
+      console.log('[Sidebar] Project already loading, skipping:', projectPath);
+      return;
+    }
+
     const normalizedPath = normalizePath(projectPath);
 
-    setProjectRoot(normalizedPath);
-    setMode('project');
-    setExpandedFolders(new Set([normalizedPath])); // Auto-expand root
-    
-    // Build project context
-    setIsBuildingContext(true);
-    setProjectContext(normalizedPath);
-    
-    setIsBuildingContext(false);
-    
-    // Load root folder contents immediately
-    await loadFolderChildren(normalizedPath, true);
+    // Check if this project is already open
+    if (projectRoot === normalizedPath && mode === 'project') {
+      console.log('[Sidebar] Project already open:', normalizedPath);
+      return;
+    }
 
-    // Notify main process to save this as the last opened project
-    window.electronAPI.project.setCurrent(normalizedPath);
-  }, [loadFolderChildren]);
+    isProjectLoadingRef.current = true;
+    console.log('[Sidebar] Opening project:', normalizedPath);
+
+    try {
+      setProjectRoot(normalizedPath);
+      setMode('project');
+      setExpandedFolders(new Set([normalizedPath])); // Auto-expand root
+
+      // Build project context
+      setIsBuildingContext(true);
+      setProjectContext(normalizedPath);
+
+      setIsBuildingContext(false);
+
+      // Load root folder contents immediately
+      await loadFolderChildren(normalizedPath, true);
+
+      // Notify main process to save this as the last opened project
+      // Skip if this is being called from the initial load
+      if (!skipSave) {
+        await window.electronAPI.project.setCurrent(normalizedPath);
+      }
+
+      console.log('[Sidebar] Project opened successfully:', normalizedPath);
+    } catch (error) {
+      console.error('[Sidebar] Failed to open project:', error);
+    } finally {
+      isProjectLoadingRef.current = false;
+    }
+  }, [loadFolderChildren, projectRoot, mode]);
 
   const handleOpenProject = async () => {
     if (!window.electronAPI) return;
@@ -291,6 +318,7 @@ export default function Sidebar() {
   };
 
   const handleRemoveProject = useCallback(() => {
+    isProjectLoadingRef.current = false;
     setProjectRoot(null);
     useStore.getState().setProjectContext(null);
     setExpandedFolders(new Set());
@@ -302,14 +330,53 @@ export default function Sidebar() {
 
   // Listen for project:load-path from main process
   useEffect(() => {
+    console.log('[Sidebar] Setting up project:load-path listener');
     if (window.electronAPI?.project?.onLoadPath) {
       const dispose = window.electronAPI.project.onLoadPath((projectPath: string) => {
-        console.log('[Sidebar] Received project:load-path', projectPath);
-        openProject(projectPath);
+        console.log('[Sidebar] Received project:load-path:', projectPath);
+        // skipSave=true because this is called from setCurrent which already saves
+        openProject(projectPath, true);
       });
-      return () => dispose();
+      return () => {
+        console.log('[Sidebar] Disposing project:load-path listener');
+        dispose();
+      };
+    } else {
+      console.warn('[Sidebar] project.onLoadPath not available');
     }
   }, [openProject]);
+
+  // On mount, check if there's a last opened project to load
+  useEffect(() => {
+    console.log('[Sidebar] Mount effect running, projectRoot:', projectRoot, 'mode:', mode);
+    const checkLastProject = async () => {
+      // Wait a bit for the component to fully mount
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      console.log('[Sidebar] Checking for last project...');
+      console.log('[Sidebar] State check - projectRoot:', projectRoot, 'isLoading:', isProjectLoadingRef.current);
+      console.log('[Sidebar] API check - getCurrent:', !!window.electronAPI?.project?.getCurrent);
+
+      if (!projectRoot && !isProjectLoadingRef.current && window.electronAPI?.project?.getCurrent) {
+        try {
+          const lastProjectPath = await window.electronAPI.project.getCurrent();
+          console.log('[Sidebar] Got lastProjectPath:', lastProjectPath);
+          if (lastProjectPath) {
+            console.log('[Sidebar] Opening last project:', lastProjectPath);
+            // skipSave=true because we're just restoring state, not changing it
+            openProject(lastProjectPath, true);
+          } else {
+            console.log('[Sidebar] No last project found');
+          }
+        } catch (error) {
+          console.error('[Sidebar] Error getting last project:', error);
+        }
+      } else {
+        console.log('[Sidebar] Skipping project load - conditions not met');
+      }
+    };
+    checkLastProject();
+  }, []); // Empty deps - only run once on mount
 
   // Handle generic file system events
   const handleFileSystemEvent = useCallback((type: 'created' | 'deleted' | 'renamed', data: any) => {
@@ -469,22 +536,21 @@ export default function Sidebar() {
         icon: <ExternalLink size={14} />, 
         onClick: () => openFileByPath(item.path) 
       },
-      { 
-        label: 'Add to Context', 
-        icon: <Plus size={14} />, 
+      {
+        label: 'Add to Context',
+        icon: <Plus size={14} />,
         onClick: async () => {
           const extension = item.name.split('.').pop()?.toLowerCase() || '';
           const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'];
-          
-          if (window.electronAPI?.readFile) {
+
+          if (imageExtensions.includes(extension) && extension !== 'svg') {
+            // Use file:// URL for images
+            addContextImage({ path: item.path, data: `file://${item.path}` });
+          } else if (window.electronAPI?.readFile) {
             try {
               const result = await window.electronAPI.readFile(item.path);
               if (result.content && !result.error) {
-                if (imageExtensions.includes(extension) && extension !== 'svg') {
-                  addContextImage({ path: item.path, data: result.content });
-                } else {
-                  addContextFile({ path: item.path, content: result.content });
-                }
+                addContextFile({ path: item.path, content: result.content });
               }
             } catch (error) {
               console.error('Failed to add to context:', error);

@@ -1,14 +1,30 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, MenuItem } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, MenuItem, globalShortcut, nativeTheme } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { existsSync } from 'fs';
 import * as os from 'os';
 import { spawn, exec } from 'child_process';
 import { watch, FSWatcher } from 'fs';
 import { glob } from 'glob';
 import { AIBackendService } from './services/ai-backend.service';
+import { ModelSearchService } from './services/model-search.service';
+import { systemTrayService } from './services/system-tray.service';
 import * as pty from 'node-pty';
 
 const isDev = !app.isPackaged;
+
+// Request single instance lock - prevents multiple app instances
+// This ensures "Open With" opens files in the existing instance
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  console.log('[Electron] Another instance is already running - this is a secondary instance');
+  // This is a secondary instance, quit immediately
+  // The main instance will handle opening files via second-instance event
+  app.quit();
+} else {
+  console.log('[Electron] Single instance lock acquired - this is the primary instance');
+}
 
 // Path to store the last opened project
 const projectStorePath = path.join(app.getPath('userData'), 'last-opened-project.json');
@@ -17,8 +33,6 @@ const projectStorePath = path.join(app.getPath('userData'), 'last-opened-project
 const ptySessions = new Map<string, pty.IPty>();
 
 function createPty(id: string, cols: number, rows: number, cwd?: string, shellPath?: string) {
-  // Use provided shell, or user's default
-  // On Windows, prefer PowerShell. On others, prefer configured shell or env shell or bash.
   let shell = shellPath;
   if (!shell || shell.trim() === '') {
     shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
@@ -33,8 +47,6 @@ function createPty(id: string, cols: number, rows: number, cwd?: string, shellPa
     targetCwd = os.homedir();
   }
 
-  // Ensure TERM is explicitly set to xterm-256color to satisfy fish/zsh capability checks
-  // COLORTERM=truecolor enables 24-bit color support
   const env = {
     ...process.env,
     TERM: 'xterm-256color',
@@ -42,9 +54,8 @@ function createPty(id: string, cols: number, rows: number, cwd?: string, shellPa
   };
 
   try {
-    // Check if session exists to avoid duplicates
     if (ptySessions.has(id)) {
-      console.log(`[PTY] Session ${id} already exists, killing it.`);
+      console.log(`[PTY] Session \${id} already exists, killing it.`);
       ptySessions.get(id)?.kill();
       ptySessions.delete(id);
     }
@@ -60,19 +71,23 @@ function createPty(id: string, cols: number, rows: number, cwd?: string, shellPa
     ptySessions.set(id, ptyProcess);
 
     ptyProcess.onData((data) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('pty:data', { id, data });
-      }
+      windows.forEach(win => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('pty:data', { id, data });
+        }
+      });
     });
 
     ptyProcess.onExit(({ exitCode, signal }) => {
       ptySessions.delete(id);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('pty:exit', { id, exitCode });
-      }
+      windows.forEach(win => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('pty:exit', { id, exitCode });
+        }
+      });
     });
     
-    console.log(`[PTY] Created session ${id} (shell: ${shell}, cols: ${cols}, rows: ${rows})`);
+    console.log(`[PTY] Created session \${id} (shell: \${shell}, cols: \${cols}, rows: \${rows})`);
     return ptyProcess;
   } catch (error) {
     console.error('[PTY] Failed to create session:', error);
@@ -80,15 +95,13 @@ function createPty(id: string, cols: number, rows: number, cwd?: string, shellPa
   }
 }
 
-// Function to save the last opened project path
 async function saveLastOpenedProject(projectPath: string | null): Promise<void> {
   try {
     if (projectPath) {
       await fs.writeFile(projectStorePath, JSON.stringify({ path: projectPath }), 'utf-8');
       console.log('[Electron] Saved last opened project:', projectPath);
     } else {
-      // If projectPath is null, delete the file to indicate no project is open
-      await fs.unlink(projectStorePath).catch(() => {}); // Ignore error if file doesn't exist
+      await fs.unlink(projectStorePath).catch(() => {});
       console.log('[Electron] Cleared last opened project.');
     }
   } catch (error) {
@@ -96,7 +109,6 @@ async function saveLastOpenedProject(projectPath: string | null): Promise<void> 
   }
 }
 
-// Function to load the last opened project path
 async function loadLastOpenedProject(): Promise<string | null> {
   try {
     const data = await fs.readFile(projectStorePath, 'utf-8');
@@ -104,15 +116,13 @@ async function loadLastOpenedProject(): Promise<string | null> {
     console.log('[Electron] Loaded last opened project:', config.path);
     return config.path;
   } catch (error) {
-    // File not found or parsing error, assume no last opened project
     console.log('[Electron] No last opened project found or failed to load.', error);
     return null;
   }
 }
 
-// Configure Electron for hybrid graphics and GPU issues
 if (process.platform === 'linux') {
-  const forceHardware = process.env.ALPHASTUDIO_HARDWARE_ACCEL === '1';
+  const forceHardware = process.env.CANDYCODE_HARDWARE_ACCEL === '1';
   if (!forceHardware) {
     app.commandLine.appendSwitch('--disable-gpu');
     app.commandLine.appendSwitch('--disable-gpu-compositing');
@@ -126,12 +136,8 @@ if (process.platform === 'linux') {
   }
 }
 
-// Initialize AI service
 const aiBackendService = new AIBackendService();
 
-/**
- * Auto-start Ollama if it's not running
- */
 async function ensureOllamaRunning() {
   console.log('[Ollama] Checking if Ollama is running...');
   const ollamaService = aiBackendService.getOllamaService();
@@ -139,8 +145,6 @@ async function ensureOllamaRunning() {
   
   if (status.running) {
     console.log('[Ollama] Ollama is already running.');
-    
-    // Auto-load the previously selected Ollama model
     await autoLoadOllamaModel();
     return;
   }
@@ -151,7 +155,6 @@ async function ensureOllamaRunning() {
   let command = 'ollama serve';
   
   if (platform === 'win32') {
-    // On Windows, Ollama might be in a specific path
     const possiblePaths = [
       path.join(process.env.LOCALAPPDATA || '', 'Ollama', 'ollama.exe'),
       'ollama.exe'
@@ -159,7 +162,7 @@ async function ensureOllamaRunning() {
     for (const p of possiblePaths) {
       try {
         await fs.access(p);
-        command = `"${p}" serve`;
+        command = `"\${p}" serve`;
         break;
       } catch (e) {}
     }
@@ -174,23 +177,27 @@ async function ensureOllamaRunning() {
 
   ollamaProcess.unref();
   console.log('[Ollama] Ollama start command issued.');
+
+  // Poll for Ollama to be ready (up to 15 seconds with retries)
+  const maxRetries = 15;
+  const retryDelay = 1000;
   
-  // Wait a bit and check again
-  setTimeout(async () => {
+  for (let i = 0; i < maxRetries; i++) {
+    await new Promise(resolve => setTimeout(resolve, retryDelay));
     const newStatus = await ollamaService.checkServerStatus();
     if (newStatus.running) {
-      console.log('[Ollama] Ollama started successfully.');
-      // Auto-load the previously selected Ollama model
+      console.log('[Ollama] Ollama started successfully after ' + (i + 1) + ' seconds.');
       await autoLoadOllamaModel();
-    } else {
-      console.warn('[Ollama] Ollama failed to start automatically. User may need to start it manually.');
+      return;
     }
-  }, 5000);
+    console.log(`[Ollama] Waiting for Ollama to start... (${i + 1}/${maxRetries})`);
+  }
+
+  console.warn('[Ollama] Ollama failed to start automatically. User may need to:');
+  console.warn('[Ollama]   1. Install Ollama from https://ollama.ai');
+  console.warn('[Ollama]   2. Start Ollama manually by running: ollama serve');
 }
 
-/**
- * Auto-load the previously selected Ollama model on app startup
- */
 async function autoLoadOllamaModel() {
   try {
     const ollamaService = aiBackendService.getOllamaService();
@@ -211,7 +218,6 @@ async function autoLoadOllamaModel() {
         }
       }
     } catch (error) {
-      // File doesn't exist or parsing error - no model was previously selected
       console.log('[Ollama] No previously selected model to auto-load.');
     }
   } catch (error: any) {
@@ -219,7 +225,6 @@ async function autoLoadOllamaModel() {
   }
 }
 
-// Helper function to recursively copy directories
 async function copyDirectory(source: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true });
   const entries = await fs.readdir(source, { withFileTypes: true });
@@ -237,19 +242,17 @@ async function copyDirectory(source: string, dest: string): Promise<void> {
 }
 
 let mainWindow: BrowserWindow | null = null;
+const windows: BrowserWindow[] = [];
 let projectWatcher: FSWatcher | null = null;
 let currentProjectPath: string | null = null;
-let projectFilesCache: string[] = []; // In-memory cache of project files
-let scanPromise: Promise<void> | null = null; // Track active scan
+let projectFilesCache: string[] = [];
+let scanPromise: Promise<void> | null = null;
 
-// Debouncing for file watcher events
 const fileWatcherDebounceMap = new Map<string, any>();
 const processedEvents = new Set<string>();
-const DEBOUNCE_DELAY = 150; // ms
+const DEBOUNCE_DELAY = 150;
 
-// Function to scan and cache project files
 async function scanProjectFiles(rootPath: string) {
-  // If already scanning, return the existing promise
   if (scanPromise) return scanPromise;
 
   scanPromise = (async () => {
@@ -260,20 +263,18 @@ async function scanProjectFiles(rootPath: string) {
         resolvedRoot = rootPath.replace(/^~/, os.homedir());
       }
       
-      // Normalize path separators to forward slashes for glob
-      // This is crucial for Windows support where glob might struggle with backslashes in CWD
       const globRoot = resolvedRoot.replace(/\\/g, '/');
 
       const files = await glob('**/*', {
         cwd: globRoot,
         nodir: true,
-        dot: true, // Include dotfiles
+        dot: true,
         ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.DS_Store', '**/build/**', '**/.next/**', '**/.cache/**'],
         absolute: false
       });
       
       projectFilesCache = files;
-      console.log(`[Electron] Cached ${files.length} files`);
+      console.log(`[Electron] Cached \${files.length} files`);
     } catch (error) {
       console.error('[Electron] Failed to scan project files:', error);
       if (projectFilesCache.length === 0) projectFilesCache = [];
@@ -288,21 +289,20 @@ async function scanProjectFiles(rootPath: string) {
 function createWindow() {
   const preloadPath = path.join(__dirname, 'preload.js');
   console.log('[Electron] Preload path:', preloadPath);
-  
-  // Check if preload exists (warn but don't fail)
+
   fs.access(preloadPath).catch(() => {
     console.warn('[Electron] Warning: Preload script not found at:', preloadPath);
   });
 
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1000,
-    minHeight: 700,
+  const newWindow = new BrowserWindow({
+    width: 380,
+    height: 500,
+    minWidth: 380,  // Allow much smaller window sizes
+    minHeight: 185, // Allow much smaller window sizes
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     frame: true,
     backgroundColor: '#0a0e27',
-    show: true, // Show immediately
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath,
@@ -310,25 +310,24 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       webSecurity: false,
-      devTools: isDev, // Enable dev tools in dev mode
+      devTools: isDev,
     },
     icon: path.join(__dirname, '../assets/icon.png'),
   });
+
+  windows.push(newWindow);
   
-  // Ensure window is visible and focused
-  mainWindow.show();
-  mainWindow.focus();
+  if (!mainWindow) {
+    mainWindow = newWindow;
+  }
 
-  // Native Context Menu Handler for Spellchecking
-  mainWindow.webContents.on('context-menu', (event, params) => {
+  newWindow.webContents.on('context-menu', (event, params) => {
     const menu = new Menu();
-
-    // Spellcheck Suggestions
     if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
       for (const suggestion of params.dictionarySuggestions) {
         menu.append(new MenuItem({
           label: suggestion,
-          click: () => mainWindow?.webContents.replaceMisspelling(suggestion)
+          click: () => newWindow.webContents.replaceMisspelling(suggestion)
         }));
       }
       menu.append(new MenuItem({ type: 'separator' }));
@@ -340,7 +339,6 @@ function createWindow() {
       menu.append(new MenuItem({ type: 'separator' }));
     }
 
-    // Standard Editing Actions
     menu.append(new MenuItem({ role: 'undo' }));
     menu.append(new MenuItem({ role: 'redo' }));
     menu.append(new MenuItem({ type: 'separator' }));
@@ -351,59 +349,49 @@ function createWindow() {
     menu.append(new MenuItem({ type: 'separator' }));
     menu.append(new MenuItem({ role: 'selectAll' }));
 
-    // Custom Actions (only for editable fields)
     if (params.isEditable) {
       menu.append(new MenuItem({ type: 'separator' }));
-      
       menu.append(new MenuItem({
         label: 'Insert Emoji',
-        click: () => mainWindow?.webContents.send('context-menu-command', 'insert-emoji', { x: params.x, y: params.y })
+        click: () => newWindow.webContents.send('context-menu-command', 'insert-emoji', { x: params.x, y: params.y })
       }));
-
       menu.append(new MenuItem({
         label: 'Change Case',
-        click: () => mainWindow?.webContents.send('context-menu-command', 'change-case')
+        click: () => newWindow.webContents.send('context-menu-command', 'change-case')
       }));
     }
 
     menu.popup();
   });
 
-  // Window is already shown, but ensure it stays visible
-  const ensureVisible = () => {
-    if (mainWindow && !mainWindow.isVisible()) {
-      console.log('[Electron] Ensuring window is visible');
-      mainWindow.show();
-      mainWindow.focus();
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
+  newWindow.on('closed', () => {
+    const index = windows.indexOf(newWindow);
+    if (index !== -1) {
+      windows.splice(index, 1);
+    }
+    
+    if (newWindow === mainWindow) {
+      mainWindow = windows.length > 0 ? windows[0] : null;
+    }
+    
+    if (windows.length === 0) {
+      ptySessions.forEach(p => p.kill());
+      ptySessions.clear();
+      if (process.platform !== 'darwin') {
+        app.quit();
       }
     }
-  };
-  
-  // Check visibility periodically
-  const visibilityCheck = setInterval(ensureVisible, 1000);
-  
-  // Clear interval when window closes
-  mainWindow.on('closed', () => {
-    clearInterval(visibilityCheck);
-    // Cleanup PTYs
-    ptySessions.forEach(p => p.kill());
-    ptySessions.clear();
   });
 
-  // Handle page load errors
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+  newWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     console.error('[Electron] Page load failed:', errorCode, errorDescription, validatedURL);
-    
-    // Show error page if load fails
-    if (mainWindow) {
+    if (newWindow) {
       const errorHTML = `
         <!DOCTYPE html>
         <html>
           <head>
             <meta charset="UTF-8">
-            <title>AlphaStudio - Loading Error</title>
+            <title>CandyCode - Loading Error</title>
             <style>
               body {
                 background: #0a0e27;
@@ -427,61 +415,54 @@ function createWindow() {
           </head>
           <body>
             <div class="error-container">
-              <h1>Unable to Load AlphaStudio</h1>
-              <p>Error: <code>${errorDescription}</code></p>
-              <p>Code: <code>${errorCode}</code></p>
-              <p>URL: <code>${validatedURL}</code></p>
+              <h1>Unable to Load CandyCode</h1>
+              <p>Error: <code>\${errorDescription}</code></p>
+              <p>Code: <code>\${errorCode}</code></p>
+              <p>URL: <code>\${validatedURL}</code></p>
               <p style="margin-top: 20px;">Please check that the Vite dev server is running on port 5173.</p>
             </div>
           </body>
         </html>
       `;
-      mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHTML)}`).catch(() => {});
-      
-      if (!mainWindow.isVisible()) {
-        console.log('[Electron] Showing window despite load error');
-        mainWindow.show();
-        mainWindow.focus();
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
-      }
+      newWindow.loadURL(`data:text/html;charset=utf-8,\${encodeURIComponent(errorHTML)}`).catch(() => {});
+      newWindow.show();
     }
   });
 
-  // Log when page starts loading
-  mainWindow.webContents.on('did-start-loading', () => {
+  newWindow.webContents.on('did-start-loading', () => {
     console.log('[Electron] Page started loading');
   });
 
-  // Log when page finishes loading
-  mainWindow.webContents.on('did-finish-load', async () => {
+  newWindow.webContents.on('did-finish-load', async () => {
     console.log('[Electron] Page finished loading');
-    // Ensure window is visible after page loads
-    if (mainWindow && !mainWindow.isVisible()) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    newWindow.show();
+    newWindow.focus();
 
-    // Attempt to load the last opened project
+    // Note: We no longer send project:load-path here
+    // The Sidebar component will request the last project on mount via project:get-current
+    // This prevents race conditions and timing issues
     const lastProjectPath = await loadLastOpenedProject();
     if (lastProjectPath) {
-      console.log('[Electron] Sending last opened project path to renderer:', lastProjectPath);
+      console.log('[Electron] Last project available for restore:', lastProjectPath);
       setupProjectWatcher(lastProjectPath);
-      mainWindow?.webContents.send('project:load-path', lastProjectPath);
     }
   });
-  
-  // Log console messages from renderer
-  mainWindow.webContents.on('console-message', (event, level, message) => {
-    console.log(`[Renderer ${level}]:`, message);
+
+  newWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http')) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
   });
-  
-  // Handle DOM ready
-  mainWindow.webContents.on('dom-ready', () => {
+
+  newWindow.webContents.on('console-message', (event, level, message) => {
+    console.log(`[Renderer \${level}]:`, message);
+  });
+
+  newWindow.webContents.on('dom-ready', () => {
     console.log('[Electron] DOM ready');
-    // Inject error handler to catch React errors
-    mainWindow?.webContents.executeJavaScript(`
+    newWindow?.webContents.executeJavaScript(`
       window.addEventListener('error', (e) => {
         console.error('[Renderer Error]:', e.error);
       });
@@ -493,108 +474,196 @@ function createWindow() {
 
   if (isDev) {
     console.log('[Electron] Loading dev URL: http://localhost:5173');
-    
-    // Check if Vite server is ready before loading
-    const checkViteServer = async (retries = 20): Promise<boolean> => {
-      try {
-        const http = await import('http');
-        return new Promise((resolve) => {
-          const req = http.get('http://localhost:5173', (res) => {
-            resolve(res.statusCode === 200);
-          });
-          req.on('error', () => {
-            if (retries > 0) {
-              setTimeout(() => checkViteServer(retries - 1).then(resolve), 500);
-            } else {
-              resolve(false);
-            }
-          });
-          req.setTimeout(1000, () => {
-            req.destroy();
-            if (retries > 0) {
-              setTimeout(() => checkViteServer(retries - 1).then(resolve), 500);
-            } else {
-              resolve(false);
-            }
-          });
-        });
-      } catch (err) {
-        return false;
-      }
-    };
-    
-    // Wait for Vite server, then load
-    checkViteServer().then((ready) => {
-      if (ready) {
-        console.log('[Electron] Vite server ready, loading URL...');
-        mainWindow?.loadURL('http://localhost:5173').catch((err) => {
-          console.error('[Electron] Failed to load URL:', err.message);
-          // Window is already visible
-        });
-      } else {
-        console.error('[Electron] Vite server not ready after retries. Loading anyway...');
-        mainWindow?.loadURL('http://localhost:5173').catch((err) => {
-          console.error('[Electron] Failed to load URL:', err.message);
-        });
-        // Window is already visible
-      }
+    newWindow.loadURL('http://localhost:5173').catch((err) => {
+      console.error('[Electron] Failed to load URL:', err.message);
     });
   } else {
     console.log('[Electron] Loading production file');
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html')).catch((err) => {
+    newWindow.loadFile(path.join(__dirname, '../dist/index.html')).catch((err) => {
       console.error('[Electron] Failed to load file:', err);
-      // Window is already visible
     });
   }
 
-  // Toggle dev tools with SHIFT+F12
-  mainWindow.webContents.on('before-input-event', (event, input) => {
+  newWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.shift && input.key === 'F12') {
-      if (mainWindow?.webContents.isDevToolsOpened()) {
-        mainWindow.webContents.closeDevTools();
+      if (newWindow.webContents.isDevToolsOpened()) {
+        newWindow.webContents.closeDevTools();
       } else {
-        mainWindow?.webContents.openDevTools();
+        newWindow.webContents.openDevTools();
+      }
+      event.preventDefault();
+    }
+  });
+
+  // Handle Shift+Ctrl+N (New Window) and Ctrl+Q (Close Window)
+  newWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown') {
+      // Shift+Ctrl+N
+      if (input.control && input.shift && input.key.toLowerCase() === 'n') {
+        createWindow();
+        event.preventDefault();
+      }
+      // Ctrl+Q (Close current window instead of quitting app)
+      else if (input.control && input.key.toLowerCase() === 'q') {
+        newWindow.close();
+        event.preventDefault();
       }
     }
   });
 
-  // Removed ready-to-show handler - using fallback timeout as primary method
-  // Set main window reference immediately
-  if (mainWindow) {
-    aiBackendService.setMainWindow(mainWindow);
+  if (newWindow) {
+    aiBackendService.setMainWindow(newWindow);
+    systemTrayService.setMainWindow(newWindow);
   }
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
 }
 
-// Register IPC handlers for AI
-ipcMain.handle('ai-backend:chat', async (_, prompt: string, options: any) => {
+function createMenu() {
+  const template: any[] = [
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Window',
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click: () => createWindow()
+        },
+        { type: 'separator' },
+        {
+          label: 'Close Window',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow();
+            if (win) win.close();
+          }
+        },
+        {
+          label: 'Quit CandyCode',
+          accelerator: 'CmdOrCtrl+Shift+Q',
+          click: () => app.quit()
+        }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' },
+        { type: 'separator' },
+        { role: 'window' }
+      ]
+    },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'Learn More',
+          click: async () => {
+            await shell.openExternal('https://github.com/Tinker/AgenticApp');
+          }
+        }
+      ]
+    }
+  ];
+
+  if (process.platform === 'darwin') {
+    template.unshift({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        {
+          label: 'Quit CandyCode',
+          accelerator: 'Command+Shift+Q',
+          click: () => app.quit()
+        }
+      ]
+    });
+  }
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+ipcMain.handle('ai-backend:chat', async (event, prompt: string, options: any) => {
   try {
-    await aiBackendService.chatStream(prompt, options);
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    const onChunk = (chunk: any) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('ai-backend:chunk', chunk);
+      }
+    };
+    const originalMainWindow = aiBackendService['mainWindow'];
+    aiBackendService['mainWindow'] = win;
+    await aiBackendService.chatStream(prompt, options, onChunk);
+    aiBackendService['mainWindow'] = originalMainWindow;
   } catch (error: any) {
     console.error('[AIBackend] Chat error:', error);
-    if (mainWindow) {
-      mainWindow.webContents.send('ai-backend:chunk', {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('ai-backend:chunk', {
         type: 'error',
         data: error.message || String(error),
       });
-      mainWindow.webContents.send('ai-backend:chunk', { type: 'done' });
+      win.webContents.send('ai-backend:chunk', { type: 'done' });
     }
     throw error;
   }
 });
 
-ipcMain.handle('ai-backend:cancel', () => {
+ipcMain.handle('ai-backend:cancel', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const originalMainWindow = aiBackendService['mainWindow'];
+  aiBackendService['mainWindow'] = win;
   aiBackendService.cancel();
+  aiBackendService['mainWindow'] = originalMainWindow;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('ai-backend:chunk', { type: 'done' });
+  }
 });
 
-ipcMain.handle('ai-backend:list-models', async () => {
-  return await aiBackendService.listModels();
+ipcMain.handle('ai-backend:list-models', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const originalMainWindow = aiBackendService['mainWindow'];
+  aiBackendService['mainWindow'] = win;
+  const result = await aiBackendService.listModels();
+  aiBackendService['mainWindow'] = originalMainWindow;
+  return result;
 });
 
-// PTY Handlers
 ipcMain.handle('pty:create', (_, { id, cols, rows, cwd, shell }) => {
   createPty(id, cols, rows, cwd, shell);
 });
@@ -621,24 +690,23 @@ ipcMain.handle('pty:kill', (_, { id }) => {
   }
 });
 
-// Ollama Model Management IPC Handlers
-ipcMain.handle('ollama:check-server', async () => {
+ipcMain.handle('ollama:check-server', async (event) => {
   return await aiBackendService.getOllamaService().checkServerStatus();
 });
 
-ipcMain.handle('ollama:list-models', async () => {
+ipcMain.handle('ollama:list-models', async (event) => {
   return await aiBackendService.getOllamaService().listModels();
 });
 
-ipcMain.handle('ollama:pull-model', async (_, modelName: string) => {
+ipcMain.handle('ollama:pull-model', async (event, modelName: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   const ollamaService = aiBackendService.getOllamaService();
   let lastProgress = '';
-  
   return new Promise((resolve) => {
     ollamaService.pullModel(modelName, (progress) => {
       lastProgress = progress;
-      if (mainWindow) {
-        mainWindow.webContents.send('ollama:pull-progress', { modelName, progress });
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('ollama:pull-progress', { modelName, progress });
       }
     }).then((result) => {
       resolve({ ...result, lastProgress });
@@ -646,20 +714,17 @@ ipcMain.handle('ollama:pull-model', async (_, modelName: string) => {
   });
 });
 
-ipcMain.handle('ollama:delete-model', async (_, modelName: string) => {
+ipcMain.handle('ollama:delete-model', async (event, modelName: string) => {
   return await aiBackendService.getOllamaService().deleteModel(modelName);
 });
 
-ipcMain.handle('ollama:search-models', async (_, query: string) => {
+ipcMain.handle('ollama:search-models', async (event, query: string) => {
   return await aiBackendService.getOllamaService().searchModels(query);
 });
 
-// Run/load an Ollama model into memory
-ipcMain.handle('ollama:run-model', async (_, modelName: string) => {
+ipcMain.handle('ollama:run-model', async (event, modelName: string) => {
   console.log('[Main] Running Ollama model:', modelName);
   const result = await aiBackendService.getOllamaService().runModel(modelName);
-  
-  // If successful, persist the model selection for auto-load on next app start
   if (result.success) {
     try {
       const ollamaModelPath = path.join(app.getPath('userData'), 'ollama-active-model.json');
@@ -669,132 +734,254 @@ ipcMain.handle('ollama:run-model', async (_, modelName: string) => {
       console.warn('[Main] Could not persist model selection:', e);
     }
   }
-  
   return result;
 });
 
-// Web Search IPC Handler
 ipcMain.handle('web:search', async (_, query: string, maxResults: number = 5) => {
   const { webSearchService } = await import('./services/web-search.service');
   return await webSearchService.search(query, maxResults);
 });
 
-// File system watcher setup
+ipcMain.handle('model:search', async (_, query: string) => {
+  const { modelSearchService } = await import('./services/model-search.service');
+  return await modelSearchService.searchModels(query);
+});
+
+// ESLint IPC Handlers
+ipcMain.handle('eslint:lint-file', async (_, filePath: string, content: string) => {
+  const { eslintService } = await import('./services/eslint.service');
+  return await eslintService.lintFile(filePath, content);
+});
+
+ipcMain.handle('eslint:lint-files', async (_, files: Array<{ path: string; content: string }>) => {
+  const { eslintService } = await import('./services/eslint.service');
+  return await eslintService.lintFiles(files);
+});
+
+ipcMain.handle('eslint:set-enabled', async (_, enabled: boolean) => {
+  const { eslintService } = await import('./services/eslint.service');
+  eslintService.setEnabled(enabled);
+  return { success: true };
+});
+
+ipcMain.handle('eslint:is-enabled', async () => {
+  const { eslintService } = await import('./services/eslint.service');
+  return eslintService.isEnabled();
+});
+
+ipcMain.handle('eslint:reload-config', async () => {
+  const { eslintService } = await import('./services/eslint.service');
+  await eslintService.reloadConfig();
+  return { success: true };
+});
+
 function setupProjectWatcher(projectPath: string | null) {
-  // Close existing watcher
   if (projectWatcher) {
     projectWatcher.close();
     projectWatcher = null;
   }
-  
   currentProjectPath = projectPath;
-  projectFilesCache = []; // Clear cache on project switch
-  
-  if (!projectPath || !mainWindow) return;
-  
+  projectFilesCache = [];
+  if (!projectPath) return;
   try {
     let resolvedPath = projectPath.startsWith('~') ? projectPath.replace(/^~/, os.homedir()) : projectPath;
-    
-    // Perform initial scan to populate cache
-    // Don't await here to avoid blocking setup
     scanProjectFiles(resolvedPath);
-    
     projectWatcher = watch(resolvedPath, { recursive: true }, (eventType, filename) => {
-      if (!mainWindow || !filename) return;
-      
+      if (!filename) return;
       const filePath = path.join(resolvedPath, filename);
       const relativePath = path.relative(resolvedPath, filePath).split(path.sep).join('/');
-      const eventKey = `${eventType}:${relativePath}`;
-      
-      // Clear existing debounce timer for this event
+      const eventKey = `\${eventType}:\${relativePath}`;
       const existingTimer = fileWatcherDebounceMap.get(eventKey);
       if (existingTimer) {
         clearTimeout(existingTimer);
       }
-      
-      // Create new debounced handler
       const timer = setTimeout(() => {
-        // Check if we've already processed this exact event recently
         if (processedEvents.has(eventKey)) {
           processedEvents.delete(eventKey);
           return;
         }
-        
         processedEvents.add(eventKey);
-        
-        // Determine event type and update cache
         if (eventType === 'rename') {
-          // Check if this is part of a rename operation we're already handling
-          const isRenameOperation = processedEvents.has(`rename:${relativePath}`);
+          const isRenameOperation = processedEvents.has(`rename:\${relativePath}`);
           if (isRenameOperation) {
             fileWatcherDebounceMap.delete(eventKey);
             return;
           }
-          
-          // Check if file exists to determine if it was created or deleted
           fs.access(filePath).then(() => {
-            // File exists - it was created or renamed to this
             if (!projectFilesCache.includes(relativePath)) {
               projectFilesCache.push(relativePath);
             }
-            mainWindow?.webContents.send('file-system:created', {
-              path: projectPath.startsWith('~') ? `~/${relativePath}` : relativePath,
-              resolvedPath: filePath
+            windows.forEach(win => {
+              if (!win.isDestroyed()) {
+                win.webContents.send('file-system:created', {
+                  path: projectPath.startsWith('~') ? `~/\${relativePath}` : relativePath,
+                  resolvedPath: filePath
+                });
+              }
             });
             setTimeout(() => processedEvents.delete(eventKey), 1000);
           }).catch(() => {
-            // File doesn't exist - it was deleted
             const idx = projectFilesCache.indexOf(relativePath);
             if (idx !== -1) {
               projectFilesCache.splice(idx, 1);
             }
-            mainWindow?.webContents.send('file-system:deleted', {
-              path: projectPath.startsWith('~') ? `~/${relativePath}` : relativePath,
-              resolvedPath: filePath
+            windows.forEach(win => {
+              if (!win.isDestroyed()) {
+                win.webContents.send('file-system:deleted', {
+                  path: projectPath.startsWith('~') ? `~/\${relativePath}` : relativePath,
+                  resolvedPath: filePath
+                });
+              }
             });
             setTimeout(() => processedEvents.delete(eventKey), 1000);
           });
         } else if (eventType === 'change') {
-          // File was modified
-          mainWindow?.webContents.send('file-system:modified', {
-            path: projectPath.startsWith('~') ? `~/${relativePath}` : relativePath,
-            resolvedPath: filePath
+          windows.forEach(win => {
+            if (!win.isDestroyed()) {
+              win.webContents.send('file-system:modified', {
+                path: projectPath.startsWith('~') ? `~/\${relativePath}` : relativePath,
+                resolvedPath: filePath
+              });
+            }
           });
           setTimeout(() => processedEvents.delete(eventKey), 1000);
         }
-        
         fileWatcherDebounceMap.delete(eventKey);
       }, DEBOUNCE_DELAY);
-      
       fileWatcherDebounceMap.set(eventKey, timer);
     });
-    
     console.log('[Electron] Started file watcher for project:', resolvedPath);
   } catch (error: any) {
     console.error('[Electron] Failed to setup file watcher:', error);
   }
 }
 
-// New IPC handler to set the current project path from the renderer
-ipcMain.handle('project:set-current', async (_, projectPath: string | null) => {
+ipcMain.handle('project:set-current', async (event, projectPath: string | null) => {
+  console.log('[Project] project:set-current called with:', projectPath);
+  console.log('[Project] currentProjectPath is:', currentProjectPath);
+  
+  // Avoid duplicate saves
+  if (currentProjectPath === projectPath) {
+    console.log('[Project] Project already set to:', projectPath);
+    return;
+  }
+
+  currentProjectPath = projectPath;
+  console.log('[Project] Saving last opened project:', projectPath);
   await saveLastOpenedProject(projectPath);
+  console.log('[Project] Setting up project watcher');
   setupProjectWatcher(projectPath);
+
+  // Notify the renderer that the project has been loaded
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed() && projectPath) {
+    console.log('[Project] Sending project:load-path to renderer:', projectPath);
+    win.webContents.send('project:load-path', projectPath);
+  } else {
+    console.log('[Project] Not sending event - win:', !!win, 'projectPath:', projectPath);
+  }
 });
 
-// IPC handler for copying a file or folder
+ipcMain.handle('project:get-current', async () => {
+  console.log('[Project] project:get-current called');
+  const result = await loadLastOpenedProject();
+  console.log('[Project] project:get-current returning:', result);
+  return result;
+});
+
+// Handle app-ready signal from renderer (signals that UI is fully loaded)
+ipcMain.handle('app:ready', (event) => {
+  console.log('[App] Renderer signaled ready');
+  
+  // Open any files that were requested on launch
+  if (filesToOpenWhenReady.length > 0) {
+    console.log('[App] Opening files from launch:', filesToOpenWhenReady);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      openFilesInWindow(win, filesToOpenWhenReady);
+    }
+    filesToOpenWhenReady = [];
+  }
+  
+  return { success: true };
+});
+
+// Handle new window creation (same as Shift+Ctrl+N)
+ipcMain.handle('app:new-window', () => {
+  console.log('[App] Creating new window');
+  createWindow();
+  return { success: true };
+});
+
+// Handle close confirmation from renderer (for exit with unsaved changes check)
+ipcMain.handle('app:confirm-close-response', (event, response: { action: 'close' | 'cancel' | 'save' }) => {
+  console.log('[App] Close confirmation response:', response.action);
+  
+  if (response.action === 'close') {
+    // User confirmed close without saving - quit ALL windows (tray exit)
+    console.log('[App] Quitting all windows (tray exit)');
+    shouldQuit = true;
+    // Close all windows
+    const allWindows = BrowserWindow.getAllWindows();
+    allWindows.forEach(win => win.destroy());
+    // Force exit after brief delay
+    setTimeout(() => {
+      console.log('[App] Forcing exit');
+      app.quit();
+    }, 100);
+  } else if (response.action === 'cancel') {
+    // User cancelled - do nothing, app stays open
+    shouldQuit = false;
+  } else if (response.action === 'save') {
+    // User wants to save - don't quit, let them save manually
+    shouldQuit = false;
+  }
+  
+  return { success: true };
+});
+
+// Handle close current window (for header exit and Ctrl+Q)
+ipcMain.handle('app:close-current-window', (event) => {
+  console.log('[App] Closing current window');
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) {
+    win.close();
+    console.log('[App] Window closed');
+  }
+  return { success: true };
+});
+
+// Get system theme (for GTK/Qt on Linux, native on Mac/Windows)
+ipcMain.handle('system:get-theme', () => {
+  const isDark = nativeTheme.shouldUseDarkColors;
+  console.log('[System] Theme:', isDark ? 'dark' : 'light');
+  return { isDark };
+});
+
+// Listen for system theme changes and notify renderer
+ipcMain.handle('system:on-theme-change', (event) => {
+  const onChange = () => {
+    const isDark = nativeTheme.shouldUseDarkColors;
+    console.log('[System] Theme changed to:', isDark ? 'dark' : 'light');
+    event.sender.send('system:theme-changed', { isDark });
+  };
+  
+  nativeTheme.on('updated', onChange);
+  
+  // Return cleanup function info
+  return { success: true };
+});
+
 ipcMain.handle('copy-file', async (_, sourcePath: string, destPath: string) => {
   try {
     let resolvedSource = sourcePath.startsWith('~') ? sourcePath.replace(/^~/, os.homedir()) : sourcePath;
     let resolvedDest = destPath.startsWith('~') ? destPath.replace(/^~/, os.homedir()) : destPath;
-    
-    // Copy the file or directory
     const stats = await fs.stat(resolvedSource);
     if (stats.isDirectory()) {
       await copyDirectory(resolvedSource, resolvedDest);
     } else {
       await fs.copyFile(resolvedSource, resolvedDest);
     }
-
     return { success: true };
   } catch (error: any) {
     console.error('[Electron] Failed to copy file:', error);
@@ -802,14 +989,11 @@ ipcMain.handle('copy-file', async (_, sourcePath: string, destPath: string) => {
   }
 });
 
-// IPC handler for moving a file or folder
 ipcMain.handle('move-file', async (_, sourcePath: string, destPath: string) => {
   try {
     let resolvedSource = sourcePath.startsWith('~') ? sourcePath.replace(/^~/, os.homedir()) : sourcePath;
     let resolvedDest = destPath.startsWith('~') ? destPath.replace(/^~/, os.homedir()) : destPath;
-    
     await fs.rename(resolvedSource, resolvedDest);
-    
     return { success: true };
   } catch (error: any) {
     console.error('[Electron] Failed to move file:', error);
@@ -817,7 +1001,6 @@ ipcMain.handle('move-file', async (_, sourcePath: string, destPath: string) => {
   }
 });
 
-// IPC handler for trashing a file
 ipcMain.handle('trash-file', async (_, filePath: string) => {
   try {
     let resolvedPath = filePath.startsWith('~') ? filePath.replace(/^~/, os.homedir()) : filePath;
@@ -829,67 +1012,49 @@ ipcMain.handle('trash-file', async (_, filePath: string) => {
   }
 });
 
-// IPC handler for renaming a file or folder
 ipcMain.handle('rename-file', async (_, oldPath: string, newName: string) => {
   try {
     let resolvedOldPath = oldPath.startsWith('~') ? oldPath.replace(/^~/, os.homedir()) : oldPath;
-    
-    // Validate new name
     if (!newName || newName.trim() === '') {
       return { success: false, error: 'New name cannot be empty' };
     }
-    
-    // Remove invalid characters (OS-specific)
-    const invalidChars = process.platform === 'win32' ? /[<>:"/\\|?*]/ : /[/]/;
+    const invalidChars = process.platform === 'win32' ? /[<>:"/\\\\|?*]/ : /[/]/;
     if (invalidChars.test(newName)) {
       return { success: false, error: 'New name contains invalid characters' };
     }
-    
     const dir = path.dirname(resolvedOldPath);
     const newPath = path.join(dir, newName.trim());
-    
-    // Check if target already exists
     try {
       await fs.access(newPath);
       return { success: false, error: 'A file or folder with that name already exists' };
-    } catch {
-      // Target doesn't exist, proceed with rename
-    }
-    
+    } catch {}
     await fs.rename(resolvedOldPath, newPath);
-    
-    // Mark this as a rename operation to suppress duplicate watcher events
     const relativeOldPath = currentProjectPath ? path.relative(currentProjectPath.replace(/^~/, os.homedir()), resolvedOldPath) : '';
     const relativeNewPath = currentProjectPath ? path.relative(currentProjectPath.replace(/^~/, os.homedir()), newPath) : '';
-    
     if (relativeOldPath && relativeNewPath && currentProjectPath) {
-      // Update cache
       const idx = projectFilesCache.indexOf(relativeOldPath.split(path.sep).join('/'));
       if (idx !== -1) {
         projectFilesCache[idx] = relativeNewPath.split(path.sep).join('/');
       } else {
         projectFilesCache.push(relativeNewPath.split(path.sep).join('/'));
       }
-
-      // Mark both old and new paths as being renamed to suppress watcher events
-      processedEvents.add(`rename:${relativeOldPath}`);
-      processedEvents.add(`rename:${relativeNewPath}`);
+      processedEvents.add(`rename:\${relativeOldPath}`);
+      processedEvents.add(`rename:\${relativeNewPath}`);
       setTimeout(() => {
-        processedEvents.delete(`rename:${relativeOldPath}`);
-        processedEvents.delete(`rename:${relativeNewPath}`);
+        processedEvents.delete(`rename:\${relativeOldPath}`);
+        processedEvents.delete(`rename:\${relativeNewPath}`);
       }, 2000);
     }
-    
-    // Notify renderer about the rename for file watching
-    if (mainWindow) {
-      mainWindow.webContents.send('file-system:renamed', {
-        oldPath: oldPath,
-        newPath: path.join(path.dirname(oldPath), newName.trim()),
-        oldResolvedPath: resolvedOldPath,
-        newResolvedPath: newPath
-      });
-    }
-    
+    windows.forEach(win => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('file-system:renamed', {
+          oldPath: oldPath,
+          newPath: path.join(path.dirname(oldPath), newName.trim()),
+          oldResolvedPath: resolvedOldPath,
+          newResolvedPath: newPath
+        });
+      }
+    });
     return { success: true, newPath };
   } catch (error: any) {
     console.error('[Electron] Failed to rename file:', error);
@@ -897,70 +1062,40 @@ ipcMain.handle('rename-file', async (_, oldPath: string, newName: string) => {
   }
 });
 
-// IPC handler for searching files in a project
 ipcMain.handle('find-files', async (_, rootPath: string, query: string) => {
   try {
-    if (!rootPath) return [];
-    if (!query) return [];
-
+    if (!rootPath || !query) return [];
     let resolvedRoot = rootPath;
     if (rootPath === '~' || rootPath.startsWith('~/')) {
       resolvedRoot = rootPath.replace(/^~/, os.homedir());
     }
-
-    // If cache is empty and we have a project path, try scanning (fallback)
     if (projectFilesCache.length === 0) {
-      if (currentProjectPath) {
-        // If we are searching within the active project (likely), reuse scanning logic
-        // This is safe even if rootPath != currentProjectPath strictly string-wise if it resolves to same
-        // But for safety, we'll scan the requested rootPath if it differs substantially
-        await scanProjectFiles(currentProjectPath);
-      } else {
-        // Scan the requested path if no project is active or mismatch
-        await scanProjectFiles(rootPath);
-      }
+      await scanProjectFiles(currentProjectPath || rootPath);
     } else if (scanPromise) {
-      // Wait for ongoing scan to complete
       await scanPromise;
     }
-
     const q = query.toLowerCase();
-    
-    // Simple fuzzy search on cached files
     const matches = projectFilesCache
       .filter(file => {
         const name = path.basename(file).toLowerCase();
         const fullPath = file.toLowerCase();
-        
-        // Match name or full path
         if (name.includes(q)) return true;
-        
-        // Advanced fuzzy: check if characters appear in order
-        // Only if query is short enough to warrant it
         if (q.length > 2) {
-          let searchIdx = 0;
-          let fileIdx = 0;
+          let searchIdx = 0, fileIdx = 0;
           while (searchIdx < q.length && fileIdx < fullPath.length) {
-            if (q[searchIdx] === fullPath[fileIdx]) {
-              searchIdx++;
-            }
+            if (q[searchIdx] === fullPath[fileIdx]) searchIdx++;
             fileIdx++;
           }
           return searchIdx === q.length;
         }
-        
         return false;
       })
-      .slice(0, 100) // Limit results
-      .map(file => {
-        // file from glob is relative to resolvedRoot and uses forward slashes
-        return {
-          name: path.basename(file),
-          path: path.join(rootPath, file).replace(/\\/g, '/'),
-          type: 'file' as const
-        };
-      });
-
+      .slice(0, 100)
+      .map(file => ({
+        name: path.basename(file),
+        path: path.join(rootPath, file).replace(/\\\\/g, '/'),
+        type: 'file' as const
+      }));
     return matches;
   } catch (error: any) {
     console.error('[Electron] Find files error:', error);
@@ -969,21 +1104,190 @@ ipcMain.handle('find-files', async (_, rootPath: string, query: string) => {
 });
 
 app.whenReady().then(() => {
-  console.log('[Electron] App ready, creating window...');
+  createMenu();
   createWindow();
+  systemTrayService.createTray();
+
+  // Existing hotkeys for new window
+  globalShortcut.register('Shift+Ctrl+N', () => {
+    createWindow();
+  });
+
+  if (process.platform === 'darwin') {
+    globalShortcut.register('Cmd+Shift+N', () => {
+      createWindow();
+    });
+  }
+
+  // CandyCode launch/focus hotkey: Super/Command + Alt + C
+  const candycodeHotkey = process.platform === 'darwin' ? 'Command+Alt+C' : 
+                          process.platform === 'win32' ? 'Ctrl+Alt+C' : 
+                          'Super+Alt+C';
   
-  // Auto-start Ollama
+  const registered = globalShortcut.register(candycodeHotkey, () => {
+    console.log(`[Hotkey] CandyCode hotkey triggered: ${candycodeHotkey}`);
+    
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+      mainWindow.focus();
+      mainWindow.flashFrame(true);
+    } else {
+      createWindow();
+    }
+  });
+  
+  if (registered) {
+    console.log(`[Hotkey] Global shortcut registered: ${candycodeHotkey}`);
+  } else {
+    console.error('[Hotkey] Global shortcut registration failed - may be reserved by OS');
+  }
+
   ensureOllamaRunning();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      console.log('[Electron] App activated, creating window...');
       createWindow();
     }
   });
 });
 
-// Log any uncaught errors
+// =============================================================================
+// Cross-Platform "Open With" File Handling
+// Supports: Linux (command line), macOS (open-file), Windows (second-instance)
+// =============================================================================
+
+/**
+ * Open files in the active or most recently focused window
+ * @param filePaths - Array of file paths to open
+ */
+function openFilesInApp(filePaths: string[]) {
+  if (!filePaths || filePaths.length === 0) return;
+
+  console.log('[OpenWith] Opening files:', filePaths);
+
+  // Get the main window or create one if needed
+  let targetWindow = mainWindow;
+
+  if (!targetWindow) {
+    const windows = BrowserWindow.getAllWindows();
+    targetWindow = windows.length > 0 ? windows[0] : null;
+  }
+
+  if (!targetWindow) {
+    console.log('[OpenWith] No window available, creating new window');
+    createWindow();
+    // Wait for window to be ready
+    setTimeout(() => {
+      if (mainWindow) {
+        openFilesInWindow(mainWindow, filePaths);
+      }
+    }, 500);
+    return;
+  }
+
+  // Focus and show the window
+  if (targetWindow.isMinimized()) {
+    targetWindow.restore();
+  }
+  targetWindow.show();
+  targetWindow.focus();
+
+  // Open files in the window
+  openFilesInWindow(targetWindow, filePaths);
+}
+
+/**
+ * Send file paths to renderer to open in new tabs
+ * @param win - BrowserWindow to open files in
+ * @param filePaths - Array of file paths
+ */
+function openFilesInWindow(win: BrowserWindow, filePaths: string[]) {
+  if (!win || win.isDestroyed()) return;
+
+  console.log('[OpenWith] Sending files to window:', filePaths.length);
+
+  // Wait a bit for window to be fully ready
+  setTimeout(() => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('app:open-files', filePaths);
+      console.log('[OpenWith] Files sent to renderer');
+    }
+  }, 200);
+}
+
+// Store files to open when app is fully ready
+let filesToOpenWhenReady: string[] = [];
+let shouldQuit = false; // Flag to track if we should actually quit (for exit with unsaved changes)
+
+// Parse file paths from command line arguments
+function parseFileArgs(args: string[]): string[] {
+  return args.filter(arg => {
+    // Skip Electron/Chromium flags
+    if (arg.startsWith('--')) return false;
+    if (arg.startsWith('-') && arg.length > 1 && !arg.startsWith('-/')) return false;
+
+    // Skip AppImage mount paths (/tmp/.mount_*)
+    if (arg.includes('/tmp/.mount_') || arg.includes('AppImage')) {
+      console.log('[OpenWith] Skipping AppImage path:', arg);
+      return false;
+    }
+
+    // Skip known non-file arguments
+    if (arg.includes('electron') ||
+        arg.includes('vite') ||
+        arg.includes('node_modules') ||
+        arg.includes('app.asar') ||
+        arg === '.' || arg === '..' || arg === '/') {
+      return false;
+    }
+
+    // Accept paths that look like files
+    const isAbsolutePath = arg.startsWith('/') || (process.platform === 'win32' && /^[A-Z]:\\/i.test(arg));
+    const isRelativePath = arg.startsWith('./') || arg.startsWith('../') || (arg.includes('/') && !arg.startsWith('-'));
+    const hasExtension = arg.includes('.') && !arg.startsWith('.');
+
+    return isAbsolutePath || isRelativePath || hasExtension;
+  });
+}
+
+// Handle files from command line (Linux/Windows fresh launch)
+const initialFiles = parseFileArgs(process.argv.slice(1));
+if (initialFiles.length > 0) {
+  console.log('[OpenWith] Files from command line:', initialFiles);
+  filesToOpenWhenReady = initialFiles;
+  // Files will be opened when renderer signals it's ready
+}
+
+// macOS: Handle "Open With" from Finder
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  console.log('[OpenWith] macOS open-file:', filePath);
+  openFilesInApp([filePath]);
+});
+
+// Linux/Windows: Handle second instance (file manager "Open With" when app is running)
+app.on('second-instance', (event, commandLine) => {
+  console.log('[OpenWith] second-instance command line:', commandLine);
+
+  const filePaths = parseFileArgs(commandLine);
+
+  if (filePaths.length > 0) {
+    console.log('[OpenWith] Opening files from second instance:', filePaths);
+    openFilesInApp(filePaths);
+  }
+
+  // Focus existing window
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
+
 process.on('uncaughtException', (error) => {
   console.error('[Electron] Uncaught exception:', error);
 });
@@ -993,78 +1297,60 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    // On non-macOS, quit the app immediately if all windows are closed.
-    // We've already handled saving the project via project:set-current IPC.
-    app.quit();
-  }
+  // Prevent app from quitting when windows are closed/hidden (for system tray)
+  // This allows the tray icon to remain functional even when window is hidden
+  console.log('[SystemTray] Window closed but app continues running for tray');
 });
 
-// File system IPC Handlers
+app.on('will-quit', () => {
+  // Unregister all global shortcuts
+  globalShortcut.unregisterAll();
+  systemTrayService.destroyTray();
+  console.log('[Hotkey] All global shortcuts unregistered');
+});
+
+app.on('before-quit', () => {
+  // Do NOT clear the last opened project - we want to restore it on next launch
+  // saveLastOpenedProject(null); // REMOVED - this was clearing the saved project
+  console.log('[Electron] App quitting, preserving last opened project for next launch');
+});
+
 ipcMain.handle('read-directory', async (_, dirPath: string) => {
   try {
     let resolvedPath = dirPath;
     if (dirPath === '~' || dirPath.startsWith('~/')) {
       resolvedPath = dirPath.replace(/^~/, os.homedir());
     }
-
     const stats = await fs.stat(resolvedPath);
     if (!stats.isDirectory()) {
-      return { error: `Path is a file, not a directory: ${dirPath}` };
+      return { error: `Path is a file, not a directory: \${dirPath}` };
     }
-
     const items = await fs.readdir(resolvedPath, { withFileTypes: true });
-    
-    // Map items and resolve symlinks
     const itemsWithDetails = await Promise.all(
       items.map(async (item) => {
         const itemPath = path.join(resolvedPath, item.name);
-        let type = 'file';
-        let size = 0;
-        let isSymlink = item.isSymbolicLink();
-
+        let type = 'file', size = 0, isSymlink = item.isSymbolicLink();
         try {
-          if (item.isDirectory()) {
-            type = 'folder';
-          } else if (item.isSymbolicLink()) {
-             // Follow the link to see if it points to a directory
+          if (item.isDirectory()) type = 'folder';
+          else if (item.isSymbolicLink()) {
              const targetStats = await fs.stat(itemPath);
-             if (targetStats.isDirectory()) {
-               type = 'folder';
-             } else {
-               type = 'file';
-               size = targetStats.size;
-             }
+             type = targetStats.isDirectory() ? 'folder' : 'file';
+             if (type === 'file') size = targetStats.size;
           } else {
-             // Regular file
              type = 'file';
              const stat = await fs.stat(itemPath);
              size = stat.size;
           }
         } catch (e) {
-          // Fallback for broken links or permissions
-          console.warn(`Error getting stats for ${itemPath}:`, e);
-          type = 'file'; // Treat as file so it's visible but might error on open
+          type = 'file';
         }
-
-        return {
-          name: item.name,
-          path: itemPath,
-          type: type as 'folder' | 'file',
-          size,
-          isSymlink
-        };
+        return { name: item.name, path: itemPath, type: type as 'folder' | 'file', size, isSymlink };
       })
     );
-    
-    // Sort items: Folders first, then alphabetically
     itemsWithDetails.sort((a, b) => {
-        if (a.type === b.type) {
-            return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
-        }
+        if (a.type === b.type) return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
         return a.type === 'folder' ? -1 : 1;
     });
-
     return itemsWithDetails;
   } catch (error: any) {
     return { error: error.message };
@@ -1073,25 +1359,17 @@ ipcMain.handle('read-directory', async (_, dirPath: string) => {
 
 ipcMain.handle('read-file', async (_, filePath: string) => {
   try {
-    const resolvedPath = filePath.startsWith('~')
-      ? filePath.replace('~', os.homedir())
-      : filePath;
-
+    const resolvedPath = filePath.startsWith('~') ? filePath.replace('~', os.homedir()) : filePath;
     const stats = await fs.stat(resolvedPath);
-    if (stats.isDirectory()) {
-      return { error: `Path is a directory, not a file: ${resolvedPath}` };
-    }
-
+    if (stats.isDirectory()) return { error: `Path is a directory, not a file: \${resolvedPath}` };
     const ext = path.extname(resolvedPath).toLowerCase();
     const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'];
-    
     if (imageExtensions.includes(ext) && ext !== '.svg') {
       const buffer = await fs.readFile(resolvedPath);
       const base64 = buffer.toString('base64');
-      const mimeType = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : `image/${ext.slice(1)}`;
-      return { content: `data:${mimeType};base64,${base64}`, encoding: 'base64' };
+      const mimeType = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : `image/\${ext.slice(1)}`;
+      return { content: `data:\${mimeType};base64,\${base64}`, encoding: 'base64' };
     }
-
     const content = await fs.readFile(resolvedPath, 'utf-8');
     return { content, encoding: 'utf-8' };
   } catch (error: any) {
@@ -1101,11 +1379,7 @@ ipcMain.handle('read-file', async (_, filePath: string) => {
 
 ipcMain.handle('write-file', async (_, filePath: string, content: string) => {
   try {
-    let resolvedPath = filePath;
-    if (filePath.startsWith('~/') || filePath === '~') {
-      resolvedPath = filePath.replace(/^~/, os.homedir());
-    }
-
+    let resolvedPath = filePath.startsWith('~/') || filePath === '~' ? filePath.replace(/^~/, os.homedir()) : filePath;
     const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(resolvedPath, content, 'utf-8');
@@ -1115,71 +1389,52 @@ ipcMain.handle('write-file', async (_, filePath: string, content: string) => {
   }
 });
 
-// Handle diff approval - write file when approved
 ipcMain.handle('approve-diff', async (_, filePath: string, content: string) => {
   try {
-    let resolvedPath = filePath;
-    if (filePath.startsWith('~/') || filePath === '~') {
-      resolvedPath = filePath.replace(/^~/, os.homedir());
-    }
-
+    let resolvedPath = filePath.startsWith('~/') || filePath === '~' ? filePath.replace(/^~/, os.homedir()) : filePath;
     const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(resolvedPath, content, 'utf-8');
-    
-    // Notify AI backend that file was approved (if agent is waiting)
-    if (mainWindow) {
-      mainWindow.webContents.send('file-operation:diff-approved', { filePath });
-    }
-    
+    windows.forEach(win => {
+      if (!win.isDestroyed()) win.webContents.send('file-operation:diff-approved', { filePath });
+    });
     return { success: true };
   } catch (error: any) {
     return { error: error.message };
   }
 });
 
-// Handle diff rejection - notify agent
 ipcMain.handle('reject-diff', async (_, filePath: string) => {
   try {
-    // Notify AI backend that file was rejected (agent should query user)
-    if (mainWindow) {
-      mainWindow.webContents.send('file-operation:diff-rejected', { filePath });
-    }
+    windows.forEach(win => {
+      if (!win.isDestroyed()) win.webContents.send('file-operation:diff-rejected', { filePath });
+    });
     return { success: true };
   } catch (error: any) {
     return { error: error.message };
   }
 });
 
-// Handle check for pending approvals
 ipcMain.handle('ai-backend:check-pending-approvals', async () => {
-  // This will be handled by the renderer process checking the store
-  return false; // Default to no pending
+  return false;
 });
 
-ipcMain.on('ai-backend:pending-approvals-status', (event, hasPending: boolean) => {
-  // Forward status to AI backend service if needed
-});
-
-ipcMain.handle('show-open-dialog', async (_, options: any) => {
+ipcMain.handle('show-open-dialog', async (event, options: any) => {
   try {
-    const win = BrowserWindow.fromWebContents(_.sender) || mainWindow;
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
     const result = await dialog.showOpenDialog(win!, options);
-    
-    // If a directory was selected, save it as the last opened project
     if (!result.canceled && result.filePaths.length > 0 && options.properties?.includes('openDirectory')) {
       await saveLastOpenedProject(result.filePaths[0]);
     }
-
     return result;
   } catch (error: any) {
     return { canceled: true, error: error.message };
   }
 });
 
-ipcMain.handle('show-save-dialog', async (_, options: any) => {
+ipcMain.handle('show-save-dialog', async (event, options: any) => {
   try {
-    const win = BrowserWindow.fromWebContents(_.sender) || mainWindow;
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
     const result = await dialog.showSaveDialog(win!, options);
     return result;
   } catch (error: any) {
@@ -1189,88 +1444,35 @@ ipcMain.handle('show-save-dialog', async (_, options: any) => {
 
 ipcMain.handle('execute-command', async (_, command: string, options: any = {}) => {
   const { cwd = process.cwd(), timeout = 30000 } = options;
-
-  // Security: Block dangerous commands
   const lowerCommand = command.toLowerCase().trim();
-  const dangerousPatterns = [
-    /rm\s+-rf\s+\//,
-    /rm\s+-rf\s+~/,
-    /format\s+c:/i,
-    /shutdown/i,
-    /reboot/i,
-  ];
-
+  const dangerousPatterns = [/rm\s+-rf\s+\//, /rm\s+-rf\s+~/, /format\s+c:/i, /shutdown/i, /reboot/i];
   if (dangerousPatterns.some(pattern => pattern.test(lowerCommand))) {
-    return {
-      error: 'Command blocked for security reasons',
-      stdout: '',
-      stderr: '',
-      exitCode: -1,
-    };
+    return { error: 'Command blocked for security reasons', stdout: '', stderr: '', exitCode: -1 };
   }
-
   return new Promise((resolve) => {
-    const child = spawn(command, [], {
-      cwd,
-      shell: true,
-      env: process.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let timeoutId: any | null = null;
-
+    const child = spawn(command, [], { cwd, shell: true, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '', timeoutId: any | null = null;
     if (timeout > 0) {
       timeoutId = setTimeout(() => {
         child.kill();
-        resolve({
-          error: 'Command timed out',
-          stdout,
-          stderr,
-          exitCode: -1,
-        });
+        resolve({ error: 'Command timed out', stdout, stderr, exitCode: -1 });
       }, timeout);
     }
-
-    child.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
+    child.stdout.on('data', (data) => stdout += data.toString());
+    child.stderr.on('data', (data) => stderr += data.toString());
     child.on('close', (code) => {
       if (timeoutId) clearTimeout(timeoutId);
-      resolve({
-        stdout,
-        stderr,
-        exitCode: code || 0,
-        error: code !== 0 ? `Command exited with code ${code}` : undefined,
-      });
+      resolve({ stdout, stderr, exitCode: code || 0, error: code !== 0 ? `Command exited with code \${code}` : undefined });
     });
-
     child.on('error', (error) => {
       if (timeoutId) clearTimeout(timeoutId);
-      resolve({
-        error: error.message,
-        stdout,
-        stderr,
-        exitCode: -1,
-      });
+      resolve({ error: error.message, stdout, stderr, exitCode: -1 });
     });
   });
 });
 
 ipcMain.handle('get-system-info', async () => {
-  return {
-    platform: process.platform,
-    arch: process.arch,
-    nodeVersion: process.version,
-    cwd: process.cwd(),
-    homeDir: os.homedir(),
-  };
+  return { platform: process.platform, arch: process.arch, nodeVersion: process.version, cwd: process.cwd(), homeDir: os.homedir() };
 });
 
 ipcMain.handle('open-external', async (_, url: string) => {
@@ -1282,127 +1484,193 @@ ipcMain.handle('open-external', async (_, url: string) => {
   }
 });
 
-// Context menu handler
+ipcMain.handle('get-app-asset-path', async (event, assetName: string) => {
+  let assetPath: string = '';
+  
+  if (isDev) {
+    // Development mode: try multiple possible locations
+    const possiblePaths = [
+      path.join(__dirname, '../assets', assetName),           // dist-electron/../assets
+      path.join(process.cwd(), 'assets', assetName),          // Project root
+      path.join(app.getAppPath(), 'assets', assetName),       // App root
+    ];
+    
+    // Find the first existing path
+    for (const p of possiblePaths) {
+      if (existsSync(p)) {
+        assetPath = p;
+        break;
+      }
+    }
+    
+    // Fallback to project root if none exist
+    if (!assetPath) {
+      assetPath = path.join(process.cwd(), 'assets', assetName);
+    }
+  } else {
+    // Production mode: try multiple locations
+    // Electron packs files into app.asar, but we need to handle unpacked resources
+    const possiblePaths = [
+      path.join(process.resourcesPath, 'assets', assetName),  // electron-builder resources
+      path.join(path.dirname(app.getPath('exe')), 'assets', assetName),  // Next to executable
+      path.join(app.getAppPath(), 'assets', assetName),       // App root (might be in asar)
+      path.join(process.cwd(), 'assets', assetName),          // Current working directory
+    ];
+    
+    // Find the first existing path
+    for (const p of possiblePaths) {
+      if (existsSync(p)) {
+        assetPath = p;
+        break;
+      }
+    }
+    
+    // Ultimate fallback: use the public directory from Vite build
+    if (!assetPath) {
+      const publicPath = path.join(path.dirname(app.getPath('exe')), 'dist', assetName);
+      if (existsSync(publicPath)) {
+        assetPath = publicPath;
+      } else {
+        // Last resort: return a path that will trigger the fallback in the renderer
+        assetPath = path.join(process.resourcesPath, 'assets', assetName);
+      }
+    }
+  }
+  
+  const fileUrl = `file://${assetPath}`;
+  console.log(`[AssetPath] ${assetName}: ${fileUrl} (exists: ${existsSync(assetPath)})`);
+  return { path: assetPath, url: fileUrl };
+});
+
+// =============================================================================
+// Global Hotkey Management
+// =============================================================================
+
+const registeredHotkeys = new Map<string, () => void>();
+
+ipcMain.handle('register-global-hotkey', async (event, hotkey: string, action: string) => {
+  try {
+    // Unregister existing hotkey with same action
+    for (const [key, callback] of registeredHotkeys.entries()) {
+      if (key.startsWith(`${action}:`)) {
+        globalShortcut.unregister(key);
+        registeredHotkeys.delete(key);
+      }
+    }
+
+    const success = globalShortcut.register(hotkey, () => {
+      console.log(`[Hotkey] Triggered: ${hotkey} -> ${action}`);
+      // Notify renderer
+      mainWindow?.webContents.send('global-hotkey-triggered', { hotkey, action });
+    });
+
+    if (success) {
+      registeredHotkeys.set(`${action}:${hotkey}`, () => {});
+      console.log(`[Hotkey] Registered: ${hotkey} -> ${action}`);
+      return { success: true, hotkey };
+    } else {
+      console.error(`[Hotkey] Failed to register: ${hotkey}`);
+      return { success: false, error: 'Failed to register hotkey - may be reserved by OS' };
+    }
+  } catch (error: any) {
+    console.error('[Hotkey] Registration error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('unregister-global-hotkey', async (event, hotkey: string) => {
+  try {
+    globalShortcut.unregister(hotkey);
+    
+    // Remove from map
+    for (const key of registeredHotkeys.keys()) {
+      if (key.includes(hotkey)) {
+        registeredHotkeys.delete(key);
+        break;
+      }
+    }
+    
+    console.log(`[Hotkey] Unregistered: ${hotkey}`);
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-registered-hotkeys', async () => {
+  return Array.from(registeredHotkeys.keys()).map(key => {
+    const [action, hotkey] = key.split(':');
+    return { action, hotkey };
+  });
+});
+
+ipcMain.handle('unregister-all-hotkeys', async () => {
+  globalShortcut.unregisterAll();
+  registeredHotkeys.clear();
+  console.log('[Hotkey] All hotkeys unregistered');
+  return { success: true };
+});
+
 ipcMain.handle('show-context-menu', async (event, filePath: string, fileName: string) => {
   return new Promise((resolve) => {
     const menu = new Menu();
-    
-    menu.append(new MenuItem({
-      label: 'Open',
-      click: () => {
-        event.sender.send('context-menu-action', 'open-file', { filePath, fileName });
-        resolve({ action: 'open-file' });
-      },
-    }));
-
-    menu.append(new MenuItem({
-      label: 'Add to Context',
-      click: () => {
-        event.sender.send('context-menu-action', 'add-to-context', { filePath, fileName });
-        resolve({ action: 'add-to-context' });
-      },
-    }));
-
+    menu.append(new MenuItem({ label: 'Open', click: () => { event.sender.send('context-menu-action', 'open-file', { filePath, fileName }); resolve({ action: 'open-file' }); } }));
+    menu.append(new MenuItem({ label: 'Add to Context', click: () => { event.sender.send('context-menu-action', 'add-to-context', { filePath, fileName }); resolve({ action: 'add-to-context' }); } }));
     menu.append(new MenuItem({ type: 'separator' }));
-
-    menu.append(new MenuItem({
-      label: 'Copy to...',
-      click: async () => {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        if (!win) return;
-
-        const result = await dialog.showOpenDialog(win, {
-          title: `Copy "${fileName}" to...`,
-          properties: ['openDirectory'],
-          buttonLabel: 'Copy Here',
-        });
-
-        if (!result.canceled && result.filePaths.length > 0) {
-          const destDir = result.filePaths[0];
-          const destPath = path.join(destDir, fileName);
-          let resolvedSource = filePath.startsWith('~') ? filePath.replace(/^~/, os.homedir()) : filePath;
-
-          try {
-            const stats = await fs.stat(resolvedSource);
-            if (stats.isDirectory()) {
-              await copyDirectory(resolvedSource, destPath);
-            } else {
-              await fs.copyFile(resolvedSource, destPath);
-            }
-            event.sender.send('context-menu-action', 'copy-complete', { filePath, fileName, destPath });
-            resolve({ action: 'copy', success: true });
-          } catch (error: any) {
-            event.sender.send('context-menu-action', 'copy-error', { filePath, fileName, error: error.message });
-            resolve({ action: 'copy', error: error.message });
-          }
+    menu.append(new MenuItem({ label: 'Copy to...', click: async () => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return;
+      const result = await dialog.showOpenDialog(win, { title: `Copy "\${fileName}" to...`, properties: ['openDirectory'], buttonLabel: 'Copy Here' });
+      if (!result.canceled && result.filePaths.length > 0) {
+        const destPath = path.join(result.filePaths[0], fileName);
+        let resolvedSource = filePath.startsWith('~') ? filePath.replace(/^~/, os.homedir()) : filePath;
+        try {
+          const stats = await fs.stat(resolvedSource);
+          if (stats.isDirectory()) await copyDirectory(resolvedSource, destPath);
+          else await fs.copyFile(resolvedSource, destPath);
+          event.sender.send('context-menu-action', 'copy-complete', { filePath, fileName, destPath });
+          resolve({ action: 'copy', success: true });
+        } catch (error: any) {
+          event.sender.send('context-menu-action', 'copy-error', { filePath, fileName, error: error.message });
+          resolve({ action: 'copy', error: error.message });
         }
-      },
-    }));
-
-    menu.append(new MenuItem({
-      label: 'Move to...',
-      click: async () => {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        if (!win) return;
-
-        const result = await dialog.showOpenDialog(win, {
-          title: `Move "${fileName}" to...`,
-          properties: ['openDirectory'],
-          buttonLabel: 'Move Here',
-        });
-
-        if (!result.canceled && result.filePaths.length > 0) {
-          const destDir = result.filePaths[0];
-          const destPath = path.join(destDir, fileName);
-          let resolvedSource = filePath.startsWith('~') ? filePath.replace(/^~/, os.homedir()) : filePath;
-
-          try {
-            await fs.rename(resolvedSource, destPath);
-            event.sender.send('context-menu-action', 'move-complete', { filePath, fileName, destPath });
-            resolve({ action: 'move', success: true });
-          } catch (error: any) {
-            event.sender.send('context-menu-action', 'move-error', { filePath, fileName, error: error.message });
-            resolve({ action: 'move', error: error.message });
-          }
+      }
+    } }));
+    menu.append(new MenuItem({ label: 'Move to...', click: async () => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return;
+      const result = await dialog.showOpenDialog(win, { title: `Move "\${fileName}" to...`, properties: ['openDirectory'], buttonLabel: 'Move Here' });
+      if (!result.canceled && result.filePaths.length > 0) {
+        const destPath = path.join(result.filePaths[0], fileName);
+        let resolvedSource = filePath.startsWith('~') ? filePath.replace(/^~/, os.homedir()) : filePath;
+        try {
+          await fs.rename(resolvedSource, destPath);
+          event.sender.send('context-menu-action', 'move-complete', { filePath, fileName, destPath });
+          resolve({ action: 'move', success: true });
+        } catch (error: any) {
+          event.sender.send('context-menu-action', 'move-error', { filePath, fileName, error: error.message });
+          resolve({ action: 'move', error: error.message });
         }
-      },
-    }));
-
+      }
+    } }));
     menu.append(new MenuItem({ type: 'separator' }));
-
-    menu.append(new MenuItem({
-      label: 'Delete',
-      click: async () => {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        if (!win) return;
-
-        const result = await dialog.showMessageBox(win, {
-          type: 'warning',
-          title: 'Delete Item',
-          message: `Are you sure you want to delete "${fileName}"?`,
-          detail: 'This will move the item to the trash.',
-          buttons: ['Cancel', 'Delete'],
-          defaultId: 0,
-          cancelId: 0,
-        });
-
-        if (result.response === 1) {
-          let resolvedPath = filePath.startsWith('~') ? filePath.replace(/^~/, os.homedir()) : filePath;
-          try {
-            await shell.trashItem(resolvedPath);
-            event.sender.send('context-menu-action', 'trash-complete', { filePath, fileName });
-            resolve({ action: 'trash', success: true });
-          } catch (error: any) {
-            event.sender.send('context-menu-action', 'trash-error', { filePath, fileName, error: error.message });
-            resolve({ action: 'trash', error: error.message });
-          }
+    menu.append(new MenuItem({ label: 'Delete', click: async () => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return;
+      const result = await dialog.showMessageBox(win, { type: 'warning', title: 'Delete Item', message: `Are you sure you want to delete "\${fileName}"?`, detail: 'This will move the item to the trash.', buttons: ['Cancel', 'Delete'], defaultId: 0, cancelId: 0 });
+      if (result.response === 1) {
+        let resolvedPath = filePath.startsWith('~') ? filePath.replace(/^~/, os.homedir()) : filePath;
+        try {
+          await shell.trashItem(resolvedPath);
+          event.sender.send('context-menu-action', 'trash-complete', { filePath, fileName });
+          resolve({ action: 'trash', success: true });
+        } catch (error: any) {
+          event.sender.send('context-menu-action', 'trash-error', { filePath, fileName, error: error.message });
+          resolve({ action: 'trash', error: error.message });
         }
-      },
-    }));
-
+      }
+    } }));
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) {
-      menu.popup({ window: win });
-    }
+    if (win) menu.popup({ window: win });
   });
 });

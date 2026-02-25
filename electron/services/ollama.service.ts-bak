@@ -1,0 +1,200 @@
+/**
+ * Ollama Service
+ * Local LLM integration using the official 'ollama' npm package
+ */
+import { Ollama, Message } from 'ollama';
+// @ts-ignore
+import nodeFetch from 'node-fetch';
+import { TOOL_DEFINITIONS } from './tool-definitions';
+import {
+  readFile,
+  writeFile,
+  listFiles,
+  peekFile,
+  searchCode,
+  createPlan,
+  taskComplete,
+  executeCommand,
+  runTests,
+  searchWeb,
+} from './file-operations.service';
+
+const SYSTEM_INSTRUCTION = `You are Candy, a friendly and autonomous coding assistant for CandyCode.
+
+AGENTIC BEHAVIOR:
+- Use function calls to execute actions - call functions directly, don't describe them.
+- Provide brief, helpful text responses throughout your work.
+- After completing all actions, call task_complete.`;
+
+export interface OllamaChatOptions {
+  model?: string;
+  messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
+  system?: string;
+  onChunk?: (chunk: any) => void;
+}
+
+export class OllamaService {
+  private abortController?: AbortController;
+  private onChunkCallback?: (chunk: any) => void;
+  private client: Ollama;
+  private _processedLines = new Set<string>();
+  private _fullContentBuffer = "";
+
+  constructor() {
+    this.client = new Ollama({
+      host: 'http://127.0.0.1:11434',
+      fetch: nodeFetch as any
+    });
+  }
+
+  private sendChunk(chunk: any) {
+    if (this.onChunkCallback) {
+      this.onChunkCallback(chunk);
+    }
+  }
+
+  async listModels(): Promise<{ success: boolean; models: any[] }> {
+    try {
+      const response = await this.client.list();
+      return {
+        success: true,
+        models: response.models.map(m => ({
+          id: m.name,
+          name: m.name,
+          desc: `Local (${(m.size / 1024 / 1024 / 1024).toFixed(2)} GB)`,
+          provider: 'ollama'
+        }))
+      };
+    } catch (error) {
+      return { success: false, models: [] };
+    }
+  }
+
+  cancel(): void {
+    if (this.abortController) this.abortController.abort();
+    this._processedLines.clear();
+    this._fullContentBuffer = "";
+    this.sendChunk({ type: 'done' });
+  }
+
+  async chatStream(options: OllamaChatOptions): Promise<void> {
+    this.abortController = new AbortController();
+    this.onChunkCallback = options.onChunk;
+    this._processedLines.clear();
+    this._fullContentBuffer = "";
+
+    try {
+      const messages: Message[] = options.messages.map(m => ({
+        role: m.role,
+        content: m.content || ''
+      }));
+
+      const systemPrompt = options.system || SYSTEM_INSTRUCTION;
+      if (messages.length === 0 || messages[0].role !== 'system') {
+        messages.unshift({ role: 'system', content: systemPrompt });
+      }
+
+      // Extract flat tools for Ollama
+      const flatTools = TOOL_DEFINITIONS[0].functionDeclarations;
+
+      const response = await this.client.chat({
+        model: options.model || 'llama3.1',
+        messages: messages,
+        stream: true,
+        tools: flatTools as any,
+      });
+
+      for await (const chunk of response) {
+        if (this.abortController.signal.aborted) break;
+
+        if (chunk.message?.content) {
+          const content = chunk.message.content;
+
+          // Logic to determine if we append or replace based on stream type
+          // If the new content starts with our current buffer, it's a cumulative stream
+          if (this._fullContentBuffer.length > 0 && content.startsWith(this._fullContentBuffer)) {
+            const delta = content.slice(this._fullContentBuffer.length);
+            if (delta) {
+              this.sendChunk({ type: 'content', text: delta });
+            }
+            this._fullContentBuffer = content;
+          } else {
+            // It's a delta stream (Standard)
+            this.sendChunk({ type: 'content', text: content });
+            this._fullContentBuffer += content;
+          }
+
+          // Check for manual tool calls in the accumulated buffer
+          await this.checkManualToolCalls(this._fullContentBuffer);
+        }
+
+        // Handle Native Tool Calls
+        if (chunk.message?.tool_calls) {
+          for (const tool of chunk.message.tool_calls) {
+            const callId = `ollama_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const args = typeof tool.function.arguments === 'string' 
+              ? JSON.parse(tool.function.arguments) 
+              : tool.function.arguments;
+
+            this.sendChunk({ type: 'function_call', callId, name: tool.function.name, data: args });
+            const result = await this.executeFunctionCall(tool.function.name, args, callId);
+            this.sendChunk({ type: 'function_result', callId, name: tool.function.name, data: result.response });
+          }
+        }
+      }
+
+      this.sendChunk({ type: 'done' });
+    } catch (error: any) {
+      if (error.name === 'AbortError') return;
+      console.error("Ollama Stream Error:", error);
+      this.sendChunk({ type: 'error', message: error.message });
+    }
+  }
+
+  private async checkManualToolCalls(buffer: string) {
+    // Only look for JSON-like structures in the last 1000 chars to save perf
+    const lookback = buffer.slice(-1000);
+    const lines = lookback.split('\n');
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Basic check for JSON tool call pattern
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) continue;
+      if (!trimmed.includes('"function"') || this._processedLines.has(trimmed)) continue;
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.function && parsed.args) {
+          this._processedLines.add(trimmed);
+          const callId = `manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          
+          this.sendChunk({ type: 'function_call', callId, name: parsed.function, data: parsed.args });
+          const result = await this.executeFunctionCall(parsed.function, parsed.args, callId);
+          this.sendChunk({ type: 'function_result', callId, name: parsed.function, data: result.response });
+        }
+      } catch (e) {
+        // Not a valid tool call yet
+      }
+    }
+  }
+
+  private async executeFunctionCall(name: string, args: any, callId: string): Promise<{ response: string }> {
+    try {
+      switch (name) {
+        case 'read_file': return { response: await readFile(args) };
+        case 'write_file': return { response: await writeFile(args) };
+        case 'list_files': return { response: await listFiles(args) };
+        case 'peek_file': return { response: await peekFile(args) };
+        case 'search_code': return { response: await searchCode(args) };
+        case 'create_plan': return { response: await createPlan(args) };
+        case 'task_complete': return { response: await taskComplete(args) };
+        case 'execute_command': return { response: await executeCommand(args) };
+        case 'run_tests': return { response: await runTests(args) };
+        case 'web_search': return { response: await searchWeb(args) };
+        default: return { response: `Error: Tool ${name} not recognized.` };
+      }
+    } catch (error: any) {
+      return { response: `Error: ${error.message}` };
+    }
+  }
+}

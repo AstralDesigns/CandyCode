@@ -9,7 +9,16 @@ export interface ElectronAPI {
   executeCommand: (command: string, options?: any) => Promise<any>;
   getSystemInfo: () => Promise<any>;
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+  getAppAssetPath: (assetName: string) => Promise<{ path: string; url: string }>;
   showContextMenu: (filePath: string, fileName: string, itemType: 'file' | 'folder') => Promise<any>;
+  
+  // Global Hotkey Management
+  registerGlobalHotkey: (hotkey: string, action: string) => Promise<{ success: boolean; hotkey?: string; error?: string }>;
+  unregisterGlobalHotkey: (hotkey: string) => Promise<{ success: boolean; error?: string }>;
+  getRegisteredHotkeys: () => Promise<Array<{ action: string; hotkey: string }>>;
+  unregisterAllHotkeys: () => Promise<{ success: boolean }>;
+  on: (channel: string, callback: (data: any) => void) => void;
+  off: (channel: string, callback: (data: any) => void) => void;
   copyFile: (sourcePath: string, destPath: string) => Promise<{ success: boolean; error?: string }>;
   moveFile: (sourcePath: string, destPath: string) => Promise<{ success: boolean; error?: string }>;
   trashFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
@@ -17,6 +26,7 @@ export interface ElectronAPI {
   findFiles: (rootPath: string, query: string) => Promise<Array<{ name: string; path: string; type: 'file' }>>;
   project: {
     setCurrent: (projectPath: string | null) => Promise<void>;
+    getCurrent: () => Promise<string | null>;
     onLoadPath: (callback: (projectPath: string) => void) => () => void;
   };
   aiBackend: {
@@ -43,6 +53,17 @@ export interface ElectronAPI {
     kill: (id: string) => Promise<void>;
     onData: (callback: (data: { id: string; data: string }) => void) => () => void;
     onExit: (callback: (data: { id: string; exitCode: number }) => void) => () => void;
+  };
+  app: {
+    confirmCloseResponse: (response: { action: 'close' | 'cancel' | 'save' }) => Promise<void>;
+    newWindow: () => Promise<{ success: boolean }>;
+    onOpenFiles: (callback: (filePaths: string[]) => void) => () => void;
+    ready: () => Promise<{ success: boolean }>;
+    closeCurrentWindow: () => Promise<{ success: boolean }>;
+  };
+  system: {
+    getTheme: () => Promise<{ isDark: boolean }>;
+    onThemeChange: (callback: (theme: { isDark: boolean }) => void) => () => void;
   };
   on: (channel: string, callback: (event: any, ...args: any[]) => void) => void;
   off: (channel: string, callback: (event: any, ...args: any[]) => void) => void;

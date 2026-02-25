@@ -317,7 +317,54 @@ export default function EditorPanel({ filePath, content, onChange, language }: E
   const handleEditorDidMount = (editor: any, _monaco: any) => {
     editorRef.current = editor;
     editor.focus();
+
+    // ESLint integration - run linting on file changes
+    let eslintDebounceTimer: NodeJS.Timeout | null = null;
     
+    const runESLint = async (content: string) => {
+      if (!filePath || !window.electronAPI?.eslint) return;
+      
+      // Only lint JavaScript/TypeScript files
+      const ext = filePath.split('.').pop()?.toLowerCase();
+      if (!['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs'].includes(ext || '')) return;
+
+      if (eslintDebounceTimer) clearTimeout(eslintDebounceTimer);
+      
+      eslintDebounceTimer = setTimeout(async () => {
+        try {
+          const result = await window.electronAPI.eslint.lintFile(filePath, content);
+          
+          if (result.diagnostics && result.diagnostics.length > 0) {
+            const markers = result.diagnostics.map(diag => ({
+              severity: diag.severity === 'error' ? _monaco.MarkerSeverity.Error :
+                        diag.severity === 'warning' ? _monaco.MarkerSeverity.Warning :
+                        _monaco.MarkerSeverity.Info,
+              startLineNumber: diag.line,
+              startColumn: diag.column,
+              endLineNumber: diag.endLine,
+              endColumn: diag.endColumn,
+              message: diag.message + (diag.ruleId ? ` (${diag.ruleId})` : ''),
+              source: 'eslint',
+            }));
+            
+            _monaco.editor.setModelMarkers(editor.getModel(), 'eslint', markers);
+          } else {
+            _monaco.editor.setModelMarkers(editor.getModel(), 'eslint', []);
+          }
+        } catch (error: any) {
+          console.error('[EditorPanel] ESLint error:', error);
+        }
+      }, 500); // Debounce ESLint runs by 500ms
+    };
+
+    // Run ESLint on content changes
+    editor.onDidChangeModelContent(() => {
+      runESLint(editor.getValue());
+    });
+
+    // Initial ESLint run
+    runESLint(editor.getValue());
+
     // Track editor selection for paste detection in chat
     editor.onDidChangeCursorSelection(() => {
       const selection = editor.getSelection();
@@ -449,6 +496,44 @@ export default function EditorPanel({ filePath, content, onChange, language }: E
 
   return (
     <div className="flex-1 flex flex-col bg-background relative" style={{ height: '100%' }}>
+      {/* Command Palette Bar - Below tabs, above editor */}
+      <div className="h-7 border-b flex items-center justify-center px-2 shrink-0 z-10"
+        style={{ 
+          backgroundColor: 'var(--header-bg)', 
+          borderColor: 'var(--border-color)',
+          backdropFilter: 'blur(4px)'
+        }}
+      >
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (editorRef.current) {
+              editorRef.current.focus();
+              setTimeout(() => {
+                editorRef.current.trigger('anyString', 'editor.action.quickCommand', {});
+              }, 10);
+            }
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="flex items-center gap-2 px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/5 rounded-md text-xs text-muted transition-colors w-64 justify-between group cursor-pointer select-none"
+        >
+          <div className="flex items-center gap-1.5">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+              <line x1="6" y1="18" x2="6.01" y2="18"></line>
+            </svg>
+            <span>Command Palette...</span>
+          </div>
+          <span className="opacity-0 group-hover:opacity-50 text-[10px]">F1</span>
+        </button>
+      </div>
+
       <div className="flex-1 relative w-full h-full">
         <Editor
           height="100%"
@@ -462,7 +547,12 @@ export default function EditorPanel({ filePath, content, onChange, language }: E
           onChange={handleEditorChange}
           onMount={handleEditorDidMount}
           options={{
-            minimap: { enabled: false },
+            minimap: { 
+              enabled: true,
+              maxColumn: 120,
+              renderCharacters: true,
+              showSlider: 'always'
+            },
             fontSize: 14,
             lineNumbers: 'on',
             roundedSelection: false,
@@ -478,7 +568,7 @@ export default function EditorPanel({ filePath, content, onChange, language }: E
               comments: true,
               strings: true,
             },
-            parameterHints: { 
+            parameterHints: {
               enabled: true,
               cycle: true,
             },
@@ -513,6 +603,148 @@ export default function EditorPanel({ filePath, content, onChange, language }: E
           }}
         />
       </div>
+      {/* Monaco Widget Theming - Matches active theme */}
+      <style>{`
+        /* Find/Replace Widget */
+        .monaco-editor .find-widget {
+          background: var(--bg-secondary) !important;
+          border: 1px solid var(--border-color) !important;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+        }
+        .monaco-editor .find-widget input {
+          background: var(--input-bg) !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--input-border) !important;
+        }
+        .monaco-editor .find-widget .button {
+          color: var(--text-secondary) !important;
+        }
+        .monaco-editor .find-widget .button:hover {
+          color: var(--accent-color) !important;
+        }
+        .monaco-editor .find-widget .monaco-findInput .input {
+          color: var(--text-primary) !important;
+        }
+        .monaco-editor .find-widget .monaco-findInput .controls {
+          background: var(--bg-secondary) !important;
+        }
+        
+        /* Suggest Widget (Autocomplete) */
+        .monaco-editor .suggest-widget {
+          background: var(--bg-secondary) !important;
+          border: 1px solid var(--border-color) !important;
+        }
+        .monaco-editor .suggest-widget .monaco-list .monaco-list-row {
+          color: var(--text-primary) !important;
+        }
+        .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {
+          background: var(--accent-color) !important;
+          color: #ffffff !important;
+        }
+        .monaco-editor .suggest-widget .monaco-list .monaco-list-row .label-name {
+          color: var(--text-primary) !important;
+        }
+        .monaco-editor .suggest-widget .monaco-list .monaco-list-row .type-label {
+          color: var(--text-secondary) !important;
+        }
+        
+        /* Parameter Hints Widget */
+        .monaco-editor .parameter-hints-widget {
+          background: var(--bg-secondary) !important;
+          border: 1px solid var(--border-color) !important;
+          color: var(--text-primary) !important;
+        }
+        .monaco-editor .parameter-hints-widget .signature {
+          color: var(--text-primary) !important;
+        }
+        .monaco-editor .parameter-hints-widget .parameter {
+          color: var(--accent-color) !important;
+        }
+        .monaco-editor .parameter-hints-widget .documentation {
+          color: var(--text-secondary) !important;
+        }
+        
+        /* Quick Input Widget (Command Palette) */
+        .quick-input-widget {
+          background: var(--bg-secondary) !important;
+          border: 1px solid var(--border-color) !important;
+        }
+        .quick-input-widget .quick-input-box input {
+          background: var(--input-bg) !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--input-border) !important;
+        }
+        .quick-input-widget .monaco-list .monaco-list-row {
+          color: var(--text-primary) !important;
+        }
+        .quick-input-widget .monaco-list .monaco-list-row.focused {
+          background: var(--accent-gradient) !important;
+          color: #ffffff !important;
+        }
+        .quick-input-widget .monaco-list .monaco-list-row .quick-input-item-label {
+          color: var(--text-primary) !important;
+        }
+        .quick-input-widget .monaco-list .monaco-list-row .quick-input-item-description {
+          color: var(--text-secondary) !important;
+        }
+        
+        /* Hover Widget */
+        .monaco-editor .editor-hover-widget {
+          background: var(--bg-secondary) !important;
+          border: 1px solid var(--border-color) !important;
+          color: var(--text-primary) !important;
+        }
+        .monaco-editor .editor-hover-widget .markdown-hover {
+          color: var(--text-primary) !important;
+        }
+        
+        /* Context Menu - Monaco Menu System */
+        .monaco-menu, .monaco-menu .monaco-scrollable-element {
+          background: var(--bg-secondary) !important;
+          border: 1px solid var(--border-color) !important;
+        }
+        .monaco-menu .monaco-action-bar .action-label {
+          color: var(--text-primary) !important;
+        }
+        .monaco-menu .monaco-action-bar .action-item.focused .action-label {
+          background: var(--accent-color) !important;
+          color: #ffffff !important;
+        }
+        .monaco-menu .monaco-action-bar .action-item.disabled .action-label {
+          color: var(--text-secondary) !important;
+          opacity: 0.5;
+        }
+        .monaco-menu .monaco-menu-separator {
+          background: var(--border-color) !important;
+        }
+        
+        /* Native Editor Context Menu (right-click/shift+F10 menu) */
+        .monaco-editor .context-view,
+        .monaco-editor .context-view .monaco-scrollable-element,
+        .monaco-editor .context-view.monaco-menu-container,
+        .monaco-editor .context-view.monaco-menu-container .monaco-scrollable-element {
+          background-color: var(--bg-secondary) !important;
+          border: 1px solid var(--border-color) !important;
+        }
+        .monaco-editor .context-view .action-label,
+        .monaco-editor .context-view.monaco-menu-container .action-label {
+          color: var(--text-primary) !important;
+        }
+        .monaco-editor .context-view .action-item.focused .action-label,
+        .monaco-editor .context-view.monaco-menu-container .action-item.focused .action-label {
+          background-color: var(--accent-color) !important;
+          color: #ffffff !important;
+        }
+        .monaco-editor .context-view .monaco-menu-separator,
+        .monaco-editor .context-view.monaco-menu-container .monaco-menu-separator {
+          background-color: var(--border-color) !important;
+        }
+        .monaco-editor .context-view .action-label.disabled,
+        .monaco-editor .context-view.monaco-menu-container .action-label.disabled {
+          color: var(--text-secondary) !important;
+          opacity: 0.5;
+        }
+      `}</style>
     </div>
   );
 }

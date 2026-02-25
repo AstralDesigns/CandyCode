@@ -87,7 +87,7 @@ export class OllamaService {
   private ollama = new Ollama({
     host: 'http://127.0.0.1:11434',
     fetch: async (input: any, init: any) => {
-      const response = await nodeFetch as any; (input, {
+      const response = await nodeFetch (input, {
         ...init,
         timeout: 300000
       });
